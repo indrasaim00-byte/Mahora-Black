@@ -23,6 +23,34 @@ function getApiKey() {
   } catch (_) { return null; }
 }
 
+async function searchByName(apiKey, name) {
+  const prompt = `أنت خبير أفلام ومسلسلات. ابحث عن "${name}" وأعطني معلومات عنه.
+إذا لم تجد العمل بالضبط، ابحث عن أقرب نتيجة.
+أعطني الرد بهذا الشكل بالضبط بدون أي إضافات:
+TITLE_EN: (الاسم بالإنجليزية)
+TITLE_AR: (الاسم بالعربية)
+YEAR: (سنة الإصدار)
+GENRE: (النوع بالعربية)
+RATING: (التقييم من 10)
+EPISODES: (عدد الحلقات إذا مسلسل، أو "فيلم" إذا فيلم)
+DESCRIPTION: (وصف مختصر بالعربية في 3-4 أسطر بدون حرق أحداث)`;
+
+  const response = await axios.post(
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
+    {
+      contents: [{ role: "user", parts: [{ text: prompt }] }],
+      generationConfig: {
+        temperature: 0.3,
+        maxOutputTokens: 500,
+        thinkingConfig: { thinkingBudget: 0 }
+      }
+    },
+    { headers: { "Content-Type": "application/json" }, timeout: 20000 }
+  );
+
+  return response.data?.candidates?.[0]?.content?.parts?.[0]?.text;
+}
+
 async function getRecommendation(apiKey, type) {
   const prompt = `أنت خبير أفلام ومسلسلات. اقترح ${type} واحد فقط عشوائي وممتاز (غير مشهور جداً أو مشهور).
 أعطني الرد بهذا الشكل بالضبط بدون أي إضافات:
@@ -114,9 +142,9 @@ module.exports = {
     version: "1.0.0",
     author: "BlackBot",
     shortDescription: "اقتراح أفلام ومسلسلات",
-    longDescription: "يقترح عليك فيلم أو مسلسل أو كيدراما مع الوصف وصورة الغلاف",
+    longDescription: "يقترح عليك فيلم أو مسلسل أو كيدراما مع الوصف وصورة الغلاف، أو ابحث عن عمل معين",
     category: "ترفيه",
-    guide: "{pn} [فلم | مسلسل | كيدراما]",
+    guide: "{pn} [فلم | مسلسل | كيدراما]\n{pn} بحث [اسم الفيلم أو المسلسل]",
     role: 0,
     coolDown: 8
   },
@@ -125,23 +153,61 @@ module.exports = {
     const apiKey = getApiKey();
     if (!apiKey) return message.reply("⚠️ مفتاح API غير متوفر");
 
-    let type;
     const arg = (args[0] || "").trim();
+    const fullQuery = args.join(" ").trim();
 
+    if (arg && !CATEGORIES[arg]) {
+      const query = ["بحث", "search", "ابحث"].includes(arg) ? args.slice(1).join(" ").trim() : fullQuery;
+      if (!query) return message.reply("⚠️ اكتب اسم الفيلم أو المسلسل\nمثال: .افلام Breaking Bad");
+
+      message.reply(`╭─────────────────╮\n     ⌯ 𝕭⃟𝗹⃪𝗮⃪𝗰⃪𝐤̰ 𝕮𝗶⃪𝗻⃪𝗲⃪𝗺⃪𝗮⃪\n╰─────────────────╯\n🔍 جاري البحث عن "${query}"...`);
+
+      try {
+        const rawText = await searchByName(apiKey, query);
+        if (!rawText) return message.reply("❌ ما لقيت نتائج، تأكد من الاسم وجرب مرة أخرى");
+
+        const rec = parseResponse(rawText);
+        if (!rec.titleEn && !rec.titleAr) return message.reply("❌ ما لقيت نتائج، تأكد من الاسم وجرب مرة أخرى");
+
+        let body = `╭━━━━━━━━━━━━━━━━╮\n`;
+        body += `   🔍 ⌯ 𝕭⃟𝗹⃪𝗮⃪𝗰⃪𝐤̰ 𝕮𝗶⃪𝗻⃪𝗲⃪𝗺⃪𝗮⃪\n`;
+        body += `╰━━━━━━━━━━━━━━━━╯\n\n`;
+        body += `🎞️ الاسم: ${rec.titleAr}\n`;
+        body += `🔤 بالإنجليزية: ${rec.titleEn}\n`;
+        body += `📅 السنة: ${rec.year}\n`;
+        body += `🎭 النوع: ${rec.genre}\n`;
+        body += `⭐ التقييم: ${rec.rating}/10\n`;
+        if (rec.episodes && rec.episodes !== "فيلم") {
+          body += `📺 الحلقات: ${rec.episodes}\n`;
+        }
+        body += `\n📝 القصة:\n${rec.description}\n`;
+        body += `\n✎﹏﹏﹏﹏﹏﹏﹏﹏﹏﹏﹏﹏﹏`;
+        body += `\n↞ ⌯ 𝗕⃪𝗹⃪𝖆⃟𝗰⃪𝗸⃪ ˖՞𝗦⃪𝖆⃟𝗶⃪𝗻⃪𝘁⃪ ⪼`;
+
+        const coverUrl = await searchCover(rec.titleEn);
+        let attachment = null;
+        if (coverUrl) attachment = await downloadImage(coverUrl);
+
+        if (attachment) {
+          message.reply({ body, attachment: [attachment] });
+        } else {
+          message.reply(body);
+        }
+      } catch (err) {
+        console.error("[افلام بحث] Error:", err.message);
+        message.reply("❌ حدث خطأ أثناء البحث، جرب مرة أخرى");
+      }
+      return;
+    }
+
+    let type;
     if (CATEGORIES[arg]) {
       type = CATEGORIES[arg];
-    } else if (arg) {
-      type = arg;
     } else {
       type = DEFAULT_TYPES[Math.floor(Math.random() * DEFAULT_TYPES.length)];
     }
 
-    const waitMsg = `╭─────────────────╮
-     ⌯ 𝕭⃟𝗹⃪𝗮⃪𝗰⃪𝐤̰ 𝕮𝗶⃪𝗻⃪𝗲⃪𝗺⃪𝗮⃪
-╰─────────────────╯
-🎬 جاري البحث عن اقتراح...`;
-
-    message.reply(waitMsg);
+    message.reply(`╭─────────────────╮\n     ⌯ 𝕭⃟𝗹⃪𝗮⃪𝗰⃪𝐤̰ 𝕮𝗶⃪𝗻⃪𝗲⃪𝗺⃪𝗮⃪\n╰─────────────────╯\n🎬 جاري البحث عن اقتراح...`);
 
     try {
       const rawText = await getRecommendation(apiKey, type);
@@ -168,9 +234,7 @@ module.exports = {
 
       const coverUrl = await searchCover(rec.titleEn);
       let attachment = null;
-      if (coverUrl) {
-        attachment = await downloadImage(coverUrl);
-      }
+      if (coverUrl) attachment = await downloadImage(coverUrl);
 
       if (attachment) {
         message.reply({ body, attachment: [attachment] });
