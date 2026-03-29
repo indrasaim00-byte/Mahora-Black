@@ -150,6 +150,11 @@ module.exports = function (api, threadModel, userModel, dashBoardModel, globalMo
 
                 const { body, messageID, threadID, isGroup } = event;
 
+                if (event.type === "message" || event.type === "message_reply") {
+                        console.log(`[DEBUG-MSG] from=${event.senderID} thread=${threadID} isGroup=${isGroup} body="${(body || "").substring(0, 80)}" type=${event.type}`);
+                }
+
+
                 // Check if has threadID
                 if (!threadID)
                         return;
