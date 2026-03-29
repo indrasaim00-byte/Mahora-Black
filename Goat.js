@@ -60,7 +60,6 @@ for (const pathDir of [dirConfig, dirConfigCommands]) {
         }
 }
 const config = require(dirConfig);
-if (process.env.GOOGLE_API_KEY) config.apiKeys.gemini = process.env.GOOGLE_API_KEY;
 if (config.blackListMode?.blackListIds && Array.isArray(config.blackListMode.blackListIds))
         config.blackListMode.blackListIds = config.blackListMode.blackListIds.map(id => id.toString());
 const configCommands = require(dirConfigCommands);
@@ -188,9 +187,7 @@ const watchAndReloadConfig = (dir, type, prop, logName, afterReload) => {
 };
 
 watchAndReloadConfig(dirConfigCommands, 'change', 'configCommands', 'CONFIG COMMANDS');
-watchAndReloadConfig(dirConfig, 'change', 'config', 'CONFIG', (cfg) => {
-        if (process.env.GOOGLE_API_KEY) cfg.apiKeys.gemini = process.env.GOOGLE_API_KEY;
-});
+watchAndReloadConfig(dirConfig, 'change', 'config', 'CONFIG');
 
 global.BlackBot.envGlobal = global.BlackBot.configCommands.envGlobal;
 global.BlackBot.envCommands = global.BlackBot.configCommands.envCommands;
