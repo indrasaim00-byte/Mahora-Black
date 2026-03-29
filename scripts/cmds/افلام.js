@@ -161,7 +161,7 @@ module.exports = {
       const query = ["بحث", "search", "ابحث"].includes(arg) ? args.slice(1).join(" ").trim() : fullQuery;
       if (!query) return message.reply("⚠️ اكتب اسم الفيلم أو المسلسل\nمثال: .افلام Breaking Bad");
 
-      message.reply(`╭─────────────────╮\n     ⌯ 𝕭⃟𝗹⃪𝗮⃪𝗰⃪𝐤̰ 𝕮𝗶⃪𝗻⃪𝗲⃪𝗺⃪𝗮⃪\n╰─────────────────╯\n🔍 جاري البحث عن "${query}"...`);
+      message.reply(`◈ ↞جاري البحث..〔 ! 〕\n◈ 𝗕⃪𝗹𝗮𝗰⃪𝗸 : 𝗠⃪𝗮⃪𝗵⃪𝗼𝗿𝗮⃪\n━━━━━━━━━━━━━`);
 
       try {
         const rawText = await searchByName(apiKey, query);
@@ -208,7 +208,7 @@ module.exports = {
       type = DEFAULT_TYPES[Math.floor(Math.random() * DEFAULT_TYPES.length)];
     }
 
-    message.reply(`╭─────────────────╮\n     ⌯ 𝕭⃟𝗹⃪𝗮⃪𝗰⃪𝐤̰ 𝕮𝗶⃪𝗻⃪𝗲⃪𝗺⃪𝗮⃪\n╰─────────────────╯\n🎬 جاري البحث عن اقتراح...`);
+    message.reply(`◈ ↞جاري البحث..〔 ! 〕\n◈ 𝗕⃪𝗹𝗮𝗰⃪𝗸 : 𝗠⃪𝗮⃪𝗵⃪𝗼𝗿𝗮⃪\n━━━━━━━━━━━━━`);
 
     try {
       const rawText = await getRecommendation(apiKey, type);
