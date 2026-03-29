@@ -281,32 +281,51 @@ async function processMessage(api, event, commandName, historyKey, input) {
   }
 }
 
+const TRIGGER_NAMES = ["بلاك", "black", "blk", "بلاگ", "بﻻك"];
+
+function getTriggeredInput(body) {
+  if (!body) return null;
+  const trimmed = body.trim();
+  for (const name of TRIGGER_NAMES) {
+    if (trimmed.toLowerCase().startsWith(name)) {
+      const rest = trimmed.slice(name.length).trim();
+      if (rest.length > 0) return rest;
+      return null;
+    }
+  }
+  return null;
+}
+
 module.exports = {
   config: {
     name: "بلاك",
     aliases: ["black", "blk", "ذكاء"],
-    version: "3.0",
+    version: "4.0",
     author: "Saint",
     role: 0,
     shortDescription: "بلاك - ذكاء اصطناعي جزائري",
     category: "ai",
-    guide: "{pn} [رسالتك]",
+    guide: "اكتب بلاك [رسالتك] أو رد على رسالة بلاك",
     countDown: 5
   },
 
-  onStart: async function ({ api, event, args, commandName }) {
+  onStart: async function () {},
+
+  onChat: async function ({ api, event, commandName }) {
+    const body = (event.body || "").trim();
+    if (!body) return;
+
+    const input = getTriggeredInput(body);
+    if (!input) return;
+
     const { threadID, senderID } = event;
-    const input = args.join(" ").trim();
-
-    if (!input) return api.sendMessage("واش تبغي؟ قولي 😒", threadID, event.messageID);
-
     const historyKey = `${threadID}_${senderID}`;
     await processMessage(api, event, commandName, historyKey, input);
   },
 
   onReply: async function ({ api, event, Reply }) {
-    const { threadID, senderID, messageID } = event;
-    if (event.senderID !== Reply.author) return;
+    const { threadID, senderID } = event;
+    if (senderID !== Reply.author) return;
     const input = (event.body || "").trim();
     if (!input) return;
 
