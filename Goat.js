@@ -268,8 +268,22 @@ if (config.autoRestart) {
                         if (!currentAPI) return;
 
                         try {
-                                const threads = await currentAPI.getThreadList(15, null, ["INBOX"]);
-                                if (!threads || !threads.length) return;
+                                const folders = ["INBOX", "OTHER", "PENDING"];
+                                let allThreads = [];
+                                for (const folder of folders) {
+                                        try {
+                                                const t = await currentAPI.getThreadList(10, null, [folder]);
+                                                if (t && t.length) allThreads = allThreads.concat(t.map(x => ({ ...x, _folder: folder })));
+                                        } catch (_) {}
+                                }
+                                const threads = allThreads;
+                                if (!threads.length) { log.warn("DM CHECK", "لا توجد محادثات في أي مجلد"); return; }
+
+                                const dmThreads = threads.filter(t => !t.isGroup);
+                                log.info("DM CHECK", `وجد ${threads.length} محادثة (${dmThreads.length} خاص) | أدمن: [${[...adminSet].join(',')}]`);
+                                for (const t of dmThreads) {
+                                        log.info("DM CHECK", `  DM [${t._folder}]: threadID=${t.threadID} sender=${t.snippetSender} snippet="${(t.snippet||'').slice(0,30)}"`);
+                                }
 
                                 for (const t of threads) {
                                         if (t.isGroup) continue;
