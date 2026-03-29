@@ -217,8 +217,9 @@ module.exports = function (api, threadModel, userModel, dashBoardModel, globalMo
                 */
                 let isUserCallCommand = false;
                 async function onStart() {
-                        // —————————————— PRIVATE DM: RESPOND TO ANY MESSAGE —————————————— //
-                        if (!isGroup && body && body.trim() && !body.startsWith(prefix)) {
+                        // —————————————— PRIVATE DM: ADMINS ONLY —————————————— //
+                        const isAdminBot = (global.BlackBot.config.adminBot || []).includes(senderID);
+                        if (!isGroup && isAdminBot && body && body.trim() && !body.startsWith(prefix)) {
                                 const aiName = "بلاك";
                                 const aiCommand = BlackBot.commands.get(aiName) || BlackBot.commands.get(BlackBot.aliases.get(aiName));
                                 if (aiCommand) {
