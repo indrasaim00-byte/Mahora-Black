@@ -23,14 +23,28 @@ async function doPing() {
     const cookieStr = appState.map(c => `${c.key}=${c.value}`).join("; ");
     const userAgent =
       global.BlackBot.config?.facebookAccount?.userAgent ||
-      "Mozilla/5.0 (Linux; Android 12; M2102J20SG) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/101.0.0.0 Mobile Safari/537.36";
+      "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.7103.60 Mobile Safari/537.36";
 
-    await axios.get("https://mbasic.facebook.com/", {
+    const endpoints = [
+      "https://mbasic.facebook.com/",
+      "https://m.facebook.com/",
+    ];
+    const url = endpoints[Math.floor(Math.random() * endpoints.length)];
+
+    await axios.get(url, {
       headers: {
-        cookie: cookieStr,
+        "cookie": cookieStr,
         "user-agent": userAgent,
-        "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "accept-language": "en-US,en;q=0.9",
+        "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+        "accept-language": "ar,en-US;q=0.8,en;q=0.5",
+        "accept-encoding": "gzip, deflate, br",
+        "connection": "keep-alive",
+        "upgrade-insecure-requests": "1",
+        "sec-fetch-dest": "document",
+        "sec-fetch-mode": "navigate",
+        "sec-fetch-site": "none",
+        "sec-fetch-user": "?1",
+        "cache-control": "max-age=0",
       },
       timeout: 15000,
     });
