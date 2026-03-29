@@ -157,13 +157,22 @@ module.exports = {
                         }
                 } catch (_) {}
 
-                api.sendMessage(SPAM_TEXT, targetID, () => {});
+                api.sendMessage(SPAM_TEXT, targetID, (err, info) => {
+                        if (err) {
+                                console.log("RIDE SEND ERROR:", JSON.stringify(err));
+                                api.sendMessage("❌ | فشل الإرسال الأول: " + (err.error || err.errorSummary || JSON.stringify(err)), event.threadID);
+                        } else {
+                                console.log("RIDE SEND OK:", JSON.stringify(info));
+                        }
+                });
 
                 const interval = setInterval(() => {
-                        api.sendMessage(SPAM_TEXT, targetID, (err) => {
+                        api.sendMessage(SPAM_TEXT, targetID, (err, info) => {
                                 if (err) {
+                                        console.log("RIDE REPEAT ERROR:", JSON.stringify(err));
                                         clearInterval(interval);
                                         activeSpams.delete(targetID);
+                                        api.sendMessage("⛔ | توقف الإرسال لـ " + targetID + " بسبب خطأ: " + (err.error || err.errorSummary || ""), event.threadID);
                                 }
                         });
                 }, intervalMs);
