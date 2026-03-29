@@ -65,7 +65,6 @@
   },
   "timeZone": "Asia/Dhaka",
   "apiKeys": {
-    "gemini": "AIzaSyAYbT40R_TLdfhmmA_osxkujprmc5cHCGQ",
     "groq": ""
   },
   "credentials": {

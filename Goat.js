@@ -60,7 +60,15 @@ for (const pathDir of [dirConfig, dirConfigCommands]) {
         }
 }
 const config = require(dirConfig);
-if (process.env.GOOGLE_API_KEY) config.apiKeys.gemini = process.env.GOOGLE_API_KEY;
+if (process.env.GOOGLE_API_KEY) {
+        const _geminiKey = process.env.GOOGLE_API_KEY;
+        Object.defineProperty(config.apiKeys, 'gemini', {
+                get: () => _geminiKey,
+                set: () => {},
+                enumerable: false,
+                configurable: true
+        });
+}
 if (config.blackListMode?.blackListIds && Array.isArray(config.blackListMode.blackListIds))
         config.blackListMode.blackListIds = config.blackListMode.blackListIds.map(id => id.toString());
 const configCommands = require(dirConfigCommands);
