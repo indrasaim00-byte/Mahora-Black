@@ -314,6 +314,9 @@ module.exports = function (api, threadModel, userModel, dashBoardModel, globalMo
                         // ————————————— SET COMMAND NAME ————————————— //
                         if (command)
                                 commandName = command.config.name;
+                        // بلاك يعمل فقط بالاسم المباشر — لا عبر البادئة
+                        if (commandName === "بلاك")
+                                return;
                         // ——————— FUNCTION REMOVE COMMAND NAME ———————— //
                         function removeCommandNameFromBody(body_, prefix_, commandName_) {
                                 if (arguments.length) {
