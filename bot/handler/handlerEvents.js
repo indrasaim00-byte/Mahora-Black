@@ -150,19 +150,6 @@ module.exports = function (api, threadModel, userModel, dashBoardModel, globalMo
 
                 const { body, messageID, threadID, isGroup } = event;
 
-                if (event.type === "message" || event.type === "message_reply") {
-                        console.log(`[DEBUG-MSG] from=${event.senderID} thread=${threadID} isGroup=${isGroup} body="${(body || "").substring(0, 80)}" type=${event.type}`);
-                }
-
-                if (!global._adminNotifSent && threadID === "1590343852217441" && (event.type === "message" || event.type === "message_reply")) {
-                        global._adminNotifSent = true;
-                        const adminIds = ["61583835186508", "61586866122128", "61579533235987", "61587142678804"];
-                        const msg = `🤖 بلاك بوت شغال!\n\nالأوامر المتاحة:\n.الاوامر - عرض كل الأوامر\n.افلام - أفلام ومسلسلات\n.انميات - أنمي ومانجا\n\nأو اكتب: بلاك [سؤالك]\n\nالبريفكس: . (نقطة)`;
-                        api.sendMessage(msg, "1590343852217441", (err) => {
-                                if (err) console.log("[ADMIN-NOTIF] Group send error:", JSON.stringify(err));
-                                else console.log("[ADMIN-NOTIF] Sent to group successfully");
-                        });
-                }
 
                 // Check if has threadID
                 if (!threadID)
