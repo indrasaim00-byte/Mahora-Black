@@ -217,6 +217,30 @@ module.exports = function (api, threadModel, userModel, dashBoardModel, globalMo
                 */
                 let isUserCallCommand = false;
                 async function onStart() {
+                        // —————————————— PRIVATE DM: RESPOND TO ANY MESSAGE —————————————— //
+                        if (!isGroup && body && body.trim() && !body.startsWith(prefix)) {
+                                const aiName = "بلاك";
+                                const aiCommand = BlackBot.commands.get(aiName) || BlackBot.commands.get(BlackBot.aliases.get(aiName));
+                                if (aiCommand) {
+                                        if (isBannedOrOnlyAdmin(userData, threadData, senderID, threadID, isGroup, aiName, message, langCode))
+                                                return;
+                                        const aiInput = body.trim();
+                                        const getText2 = createGetText2(langCode, `${process.cwd()}/languages/cmds/${langCode}.js`, prefix, aiCommand);
+                                        createMessageSyntaxError(aiName);
+                                        try {
+                                                await aiCommand.onStart({
+                                                        ...parameters,
+                                                        args: aiInput.split(/ +/),
+                                                        commandName: aiName,
+                                                        getLang: getText2,
+                                                        removeCommandNameFromBody: () => aiInput
+                                                });
+                                        } catch (err) {
+                                                log.err("DM AI ROUTE", "Error routing DM to AI", err);
+                                        }
+                                }
+                                return;
+                        }
                         // —————————————— CHECK بلاك WITHOUT PREFIX —————————————— //
                         const aiTrigger = "بلاك";
                         if (body && body.startsWith(aiTrigger) && !body.startsWith(prefix)) {
