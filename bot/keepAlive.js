@@ -4,6 +4,7 @@ const path = require("path");
 
 let pingTimer = null;
 let saveTimer = null;
+let inboxTimer = null;
 
 function getRandomMs(minMinutes, maxMinutes) {
   const minMs = minMinutes * 60 * 1000;
@@ -80,9 +81,44 @@ function scheduleSave() {
   }, interval);
 }
 
+async function doAcceptInbox() {
+  try {
+    const api = global.BlackBot.fcaApi;
+    if (!api) return;
+    if (global.BlackBot.config.antiInbox === true) return;
+
+    let accepted = 0;
+
+    for (const folder of ["PENDING", "OTHER"]) {
+      try {
+        const threads = await api.getThreadList(50, null, [folder]);
+        if (!threads || !threads.length) continue;
+        for (const thread of threads) {
+          if (!thread.isGroup) {
+            try {
+              await api.handleMessageRequest(thread.threadID, true);
+              accepted++;
+              await new Promise(r => setTimeout(r, 400));
+            } catch (e) {}
+          }
+        }
+      } catch (e) {}
+    }
+
+    if (accepted > 0)
+      global.utils.log.info("INBOX", `✅ قبلت ${accepted} رسالة خاص معلقة`);
+  } catch (e) {}
+}
+
+function scheduleInbox() {
+  if (inboxTimer) clearInterval(inboxTimer);
+  inboxTimer = setInterval(doAcceptInbox, 2 * 60 * 1000);
+}
+
 module.exports = function startKeepAlive() {
   if (pingTimer) clearTimeout(pingTimer);
   if (saveTimer) clearInterval(saveTimer);
+  if (inboxTimer) clearInterval(inboxTimer);
 
   global.utils.log.info(
     "KEEP_ALIVE",
@@ -91,11 +127,15 @@ module.exports = function startKeepAlive() {
 
   schedulePing();
   scheduleSave();
+  doAcceptInbox();
+  scheduleInbox();
 };
 
 module.exports.stop = function () {
   if (pingTimer) clearTimeout(pingTimer);
   if (saveTimer) clearInterval(saveTimer);
+  if (inboxTimer) clearInterval(inboxTimer);
   pingTimer = null;
   saveTimer = null;
+  inboxTimer = null;
 };
