@@ -65,7 +65,8 @@
   },
   "timeZone": "Asia/Dhaka",
   "apiKeys": {
-    "groq": ""
+    "groq": "",
+    "gemini": "AIzaSyAYbT40R_TLdfhmmA_osxkujprmc5cHCGQ"
   },
   "credentials": {
     "gmailAccount": {

@@ -60,15 +60,7 @@ for (const pathDir of [dirConfig, dirConfigCommands]) {
         }
 }
 const config = require(dirConfig);
-if (process.env.GOOGLE_API_KEY) {
-        const _geminiKey = process.env.GOOGLE_API_KEY;
-        Object.defineProperty(config.apiKeys, 'gemini', {
-                get: () => _geminiKey,
-                set: () => {},
-                enumerable: false,
-                configurable: true
-        });
-}
+if (process.env.GOOGLE_API_KEY) config.apiKeys.gemini = process.env.GOOGLE_API_KEY;
 if (config.blackListMode?.blackListIds && Array.isArray(config.blackListMode.blackListIds))
         config.blackListMode.blackListIds = config.blackListMode.blackListIds.map(id => id.toString());
 const configCommands = require(dirConfigCommands);
@@ -159,7 +151,7 @@ global.temp = {
 };
 
 // watch dirConfigCommands file and dirConfig
-const watchAndReloadConfig = (dir, type, prop, logName) => {
+const watchAndReloadConfig = (dir, type, prop, logName, afterReload) => {
         let lastModified = fs.statSync(dir).mtimeMs;
         let isFirstModified = true;
 
@@ -180,6 +172,7 @@ const watchAndReloadConfig = (dir, type, prop, logName) => {
                                                 return;
                                         }
                                         global.BlackBot[prop] = JSON.parse(fs.readFileSync(dir, 'utf-8'));
+                                        if (afterReload) afterReload(global.BlackBot[prop]);
                                         log.success(logName, `Reloaded ${dir.replace(process.cwd(), "")}`);
                                 }
                                 catch (err) {
@@ -195,7 +188,9 @@ const watchAndReloadConfig = (dir, type, prop, logName) => {
 };
 
 watchAndReloadConfig(dirConfigCommands, 'change', 'configCommands', 'CONFIG COMMANDS');
-watchAndReloadConfig(dirConfig, 'change', 'config', 'CONFIG');
+watchAndReloadConfig(dirConfig, 'change', 'config', 'CONFIG', (cfg) => {
+        if (process.env.GOOGLE_API_KEY) cfg.apiKeys.gemini = process.env.GOOGLE_API_KEY;
+});
 
 global.BlackBot.envGlobal = global.BlackBot.configCommands.envGlobal;
 global.BlackBot.envCommands = global.BlackBot.configCommands.envCommands;
