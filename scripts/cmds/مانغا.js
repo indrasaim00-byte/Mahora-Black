@@ -1,9 +1,11 @@
 const axios = require("axios");
+const cheerio = require("cheerio");
 const fs = require("fs-extra");
 const path = require("path");
 
 const ANILIST = "https://graphql.anilist.co";
 const MANGADEX = "https://api.mangadex.org";
+const THREEASQ = "https://3asq.org";
 const cacheDir = path.join(__dirname, "cache");
 const MAX_PER_MSG = 10;
 
@@ -77,46 +79,122 @@ async function translateToArabic(text) {
 
 async function downloadImage(url, filePath) {
   try {
-    fs.ensureDirSync(cacheDir);
-    const res = await axios.get(url, { responseType: "arraybuffer", timeout: 12000 });
+    fs.ensureDirSync(path.dirname(filePath));
+    const res = await axios.get(url.trim(), {
+      responseType: "arraybuffer",
+      timeout: 15000,
+      headers: { "Referer": THREEASQ, "User-Agent": "Mozilla/5.0" }
+    });
     fs.writeFileSync(filePath, Buffer.from(res.data));
     return filePath;
   } catch (_) { return null; }
 }
 
+async function search3asq(query) {
+  try {
+    const res = await axios.get(`${THREEASQ}/?s=${encodeURIComponent(query)}&post_type=wp-manga`, {
+      timeout: 12000,
+      headers: { "User-Agent": "Mozilla/5.0" }
+    });
+    const $ = cheerio.load(res.data);
+    const results = [];
+    $(".post-title a, h3.h4 a").each((i, el) => {
+      const href = $(el).attr("href") || "";
+      const title = $(el).text().trim();
+      const match = href.match(/\/manga\/([^/]+)/);
+      if (match && title) results.push({ slug: match[1], title, url: href });
+    });
+    return results;
+  } catch (_) { return []; }
+}
+
+async function get3asqChapters(slug) {
+  try {
+    const res = await axios.post(`${THREEASQ}/manga/${slug}/ajax/chapters/`, null, {
+      timeout: 12000,
+      headers: { "User-Agent": "Mozilla/5.0" }
+    });
+    const $ = cheerio.load(res.data);
+    const chapters = [];
+    $("li a").each((i, el) => {
+      const href = $(el).attr("href") || "";
+      const text = $(el).text().trim();
+      const urlMatch = href.match(/\/manga\/[^/]+\/([^/]+)\/?$/);
+      if (urlMatch) {
+        const numMatch = text.match(/(\d+(?:\.\d+)?)/);
+        const chNum = numMatch ? parseFloat(numMatch[1]) : parseFloat(urlMatch[1]);
+        if (!isNaN(chNum)) {
+          chapters.push({ num: chNum, url: href, title: text, urlId: urlMatch[1] });
+        }
+      }
+    });
+    return chapters;
+  } catch (_) { return []; }
+}
+
+async function get3asqPages(chapterUrl) {
+  try {
+    const res = await axios.get(chapterUrl, {
+      timeout: 15000,
+      headers: { "User-Agent": "Mozilla/5.0" }
+    });
+    const $ = cheerio.load(res.data);
+    const pages = [];
+    $(".reading-content img, .wp-manga-chapter-img").each((i, el) => {
+      const src = ($(el).attr("data-src") || $(el).attr("src") || "").trim();
+      if (src && src.startsWith("http")) pages.push(src);
+    });
+    return pages;
+  } catch (_) { return []; }
+}
+
 async function searchMangaDex(title) {
   try {
     const res = await axios.get(`${MANGADEX}/manga`, {
-      params: { title, limit: 1 },
+      params: { title, limit: 5 },
       timeout: 10000
     });
-    return res.data?.data?.[0]?.id || null;
+    const results = res.data?.data || [];
+    const tLow = title.toLowerCase();
+    const exact = results.find(m => {
+      const attrs = m.attributes;
+      const allTitles = [
+        ...(attrs.title ? Object.values(attrs.title) : []),
+        ...(attrs.altTitles || []).flatMap(obj => Object.values(obj))
+      ].map(s => s?.toLowerCase());
+      return allTitles.some(at => at === tLow || at?.includes(tLow) || tLow.includes(at));
+    });
+    return (exact || results[0])?.id || null;
   } catch (_) { return null; }
 }
 
-async function searchMangaDexAccurate(titles) {
-  for (const t of titles) {
-    if (!t) continue;
+async function findMangaDexChapter(mdId, chapterNum) {
+  const langPriority = ["ar", "en"];
+  for (const lang of langPriority) {
     try {
-      const res = await axios.get(`${MANGADEX}/manga`, {
-        params: { title: t, limit: 5 },
+      const res = await axios.get(`${MANGADEX}/chapter`, {
+        params: { manga: mdId, chapter: chapterNum, "translatedLanguage[]": lang, "order[chapter]": "asc", limit: 10 },
         timeout: 10000
       });
-      const results = res.data?.data || [];
-      const tLow = t.toLowerCase();
-      const exact = results.find(m => {
-        const attrs = m.attributes;
-        const allTitles = [
-          ...(attrs.title ? Object.values(attrs.title) : []),
-          ...(attrs.altTitles || []).flatMap(obj => Object.values(obj))
-        ].map(s => s?.toLowerCase());
-        return allTitles.some(at => at === tLow || at?.includes(tLow) || tLow.includes(at));
+      const chapters = (res.data?.data || []).filter(c => {
+        const ch = c.attributes?.chapter;
+        return ch && String(parseFloat(ch)) === String(parseFloat(chapterNum));
       });
-      if (exact) return exact.id;
-      if (results[0]) return results[0].id;
+      if (chapters.length) return { chapter: chapters[0], lang };
     } catch (_) {}
   }
   return null;
+}
+
+async function getMangaDexPages(chapterId) {
+  try {
+    const res = await axios.get(`${MANGADEX}/at-home/server/${chapterId}`, { timeout: 10000 });
+    const base = res.data?.baseUrl;
+    const hash = res.data?.chapter?.hash;
+    const pages = res.data?.chapter?.dataSaver || res.data?.chapter?.data || [];
+    if (!base || !hash || !pages.length) return [];
+    return pages.map(f => `${base}/data-saver/${hash}/${f}`);
+  } catch (_) { return []; }
 }
 
 async function getAniListTitle(query) {
@@ -131,95 +209,20 @@ async function getAniListTitle(query) {
   } catch (_) { return null; }
 }
 
-async function getAvailableChapters(mdId, lang) {
-  const all = [];
-  let offset = 0;
-  const limit = 100;
-  try {
-    while (true) {
-      const params = { manga: mdId, "order[chapter]": "desc", limit, offset };
-      if (lang) params["translatedLanguage[]"] = lang;
-      const res = await axios.get(`${MANGADEX}/chapter`, { params, timeout: 12000 });
-      const data = res.data?.data || [];
-      all.push(...data);
-      if (data.length < limit || all.length >= res.data?.total) break;
-      offset += limit;
-    }
-  } catch (_) {}
-  return all;
-}
-
-async function getAllChaptersMultiLang(mdId) {
-  const arChapters = await getAvailableChapters(mdId, "ar");
-  const arNums = new Set(arChapters.map(c => c.attributes?.chapter).filter(Boolean).map(n => String(parseFloat(n))));
-
-  const enChapters = await getAvailableChapters(mdId, "en");
-  const enOnly = enChapters.filter(c => {
-    const ch = c.attributes?.chapter;
-    return ch && !arNums.has(String(parseFloat(ch)));
-  });
-
-  return { arChapters, enOnly, arNums };
-}
-
-async function findChapter(mdId, chapterNum) {
-  const langPriority = ["ar", "en"];
-  for (const lang of langPriority) {
-    try {
-      const res = await axios.get(`${MANGADEX}/chapter`, {
-        params: { manga: mdId, chapter: chapterNum, "translatedLanguage[]": lang, "order[chapter]": "asc", limit: 20 },
-        timeout: 10000
-      });
-      const chapters = (res.data?.data || []).filter(c => {
-        const ch = c.attributes?.chapter;
-        return ch && String(parseFloat(ch)) === String(parseFloat(chapterNum));
-      });
-      if (chapters.length) return chapters[0];
-    } catch (_) {}
-  }
-  try {
-    const res = await axios.get(`${MANGADEX}/chapter`, {
-      params: { manga: mdId, chapter: chapterNum, "order[chapter]": "asc", limit: 20 },
-      timeout: 10000
-    });
-    const chapters = (res.data?.data || []).filter(c => {
-      const ch = c.attributes?.chapter;
-      return ch && String(parseFloat(ch)) === String(parseFloat(chapterNum));
-    });
-    if (chapters.length) return chapters[0];
-  } catch (_) {}
-  return null;
-}
-
-async function getChapterPages(chapterId) {
-  try {
-    const res = await axios.get(`${MANGADEX}/at-home/server/${chapterId}`, { timeout: 10000 });
-    const base = res.data?.baseUrl;
-    const hash = res.data?.chapter?.hash;
-    const pages = res.data?.chapter?.dataSaver || res.data?.chapter?.data || [];
-    if (!base || !hash || !pages.length) return [];
-    return pages.map(f => `${base}/data-saver/${hash}/${f}`);
-  } catch (_) { return []; }
-}
-
 function sendMsg(message, body) {
   return new Promise(resolve => message.reply(body, (err, info) => resolve(info?.messageID || null)));
-}
-
-function sendAttachment(message, body, attachments) {
-  return new Promise(resolve => message.reply({ body, attachment: attachments }, (err, info) => resolve(info?.messageID || null)));
 }
 
 module.exports = {
   config: {
     name: "مانغا",
     aliases: ["manga", "مانهوا", "مانجا", "manhua", "manhwa"],
-    version: "4.0",
+    version: "5.0",
     author: "Saint",
     countDown: 5,
     role: 0,
     shortDescription: "ابحث عن مانغا أو مانهوا + اقرأ الفصول",
-    longDescription: "البحث عن مانغا أو مانهوا مع صورة الغلاف والنبذة، وقراءة الفصول كصور داخل الكروب",
+    longDescription: "البحث عن مانغا أو مانهوا مع صورة الغلاف والنبذة، وقراءة الفصول كصور من مواقع عربية",
     category: "anime",
     guide: "{pn} [اسم المانغا]\n{pn} [اسم المانغا] فصل [رقم]"
   },
@@ -254,12 +257,12 @@ module.exports = {
 };
 
 async function handleInfoRequest(message, api, query, unsendWaiting) {
-  const [aniRes, mdId] = await Promise.all([
+  const [aniRes, asqResults] = await Promise.all([
     axios.post(ANILIST, {
       query: SEARCH_QUERY,
       variables: { search: query }
     }, { headers: { "Content-Type": "application/json", "Accept": "application/json" }, timeout: 15000 }),
-    searchMangaDex(query)
+    search3asq(query)
   ]);
 
   const list = aniRes.data?.data?.Page?.media;
@@ -280,7 +283,16 @@ async function handleInfoRequest(message, api, query, unsendWaiting) {
   const genres = m.genres?.slice(0, 5).join(" • ") || "-";
   const rawDesc = cleanDesc(m.description);
 
-  const chapterData = mdId ? await getAllChaptersMultiLang(mdId) : { arChapters: [], enOnly: [], arNums: new Set() };
+  let asqSlug = null;
+  if (asqResults.length) {
+    asqSlug = asqResults[0].slug;
+  } else {
+    const titleSearch = await search3asq(title);
+    if (titleSearch.length) asqSlug = titleSearch[0].slug;
+  }
+
+  let asqChapters = [];
+  if (asqSlug) asqChapters = await get3asqChapters(asqSlug);
 
   const [descAr, coverPath] = await Promise.all([
     translateToArabic(rawDesc),
@@ -290,20 +302,14 @@ async function handleInfoRequest(message, api, query, unsendWaiting) {
   ]);
 
   let chaptersText = "";
-  const arNums = [...new Set(chapterData.arChapters.map(c => c.attributes?.chapter).filter(Boolean).map(n => parseFloat(n)))].sort((a, b) => a - b);
-  const enNums = [...new Set(chapterData.enOnly.map(c => c.attributes?.chapter).filter(Boolean).map(n => parseFloat(n)))].sort((a, b) => a - b);
-
-  if (arNums.length || enNums.length) {
-    chaptersText = "\n";
-    if (arNums.length) {
-      chaptersText += `\n📚 فصول بالعربي (${arNums.length}):\n`;
-      chaptersText += arNums.map(n => `فصل ${n}`).join(" • ");
-    }
-    if (enNums.length) {
-      chaptersText += `\n\n📗 فصول بالإنجليزي فقط (${enNums.length}):\n`;
-      chaptersText += enNums.map(n => `فصل ${n}`).join(" • ");
-    }
+  if (asqChapters.length) {
+    const nums = [...new Set(asqChapters.map(c => c.num))].sort((a, b) => a - b);
+    chaptersText = `\n\n📚 فصول بالعربي — 3asq.org (${nums.length}):\n`;
+    chaptersText += nums.map(n => `فصل ${n}`).join(" • ");
     chaptersText += `\n\n💡 لقراءة فصل اكتب:\n.مانغا ${query} فصل [رقم]`;
+  } else {
+    chaptersText = `\n\n⚠ لا توجد فصول عربية على 3asq لهذه المانغا.`;
+    chaptersText += `\n💡 سيتم البحث في MangaDex عند طلب فصل.`;
   }
 
   const body =
@@ -337,39 +343,73 @@ async function handleInfoRequest(message, api, query, unsendWaiting) {
 
 async function handleChapterRequest(message, api, query, chapterNum, unsendWaiting) {
   const aniTitle = await getAniListTitle(query);
-  const searchNames = aniTitle
-    ? [aniTitle.english, aniTitle.romaji, aniTitle.native, query]
-    : [query];
-  const mdId = await searchMangaDexAccurate(searchNames);
-  if (!mdId) {
-    unsendWaiting();
-    return message.reply(`❌ لم أجد "${query}" على MangaDex.\nجرب كتابة الاسم بالإنجليزي.`);
+  const searchNames = [query];
+  if (aniTitle) {
+    if (aniTitle.english) searchNames.unshift(aniTitle.english);
+    if (aniTitle.romaji && aniTitle.romaji !== aniTitle.english) searchNames.push(aniTitle.romaji);
   }
 
   let mangaTitle = aniTitle?.english || aniTitle?.romaji || query;
-  try {
-    const mdInfo = await axios.get(`${MANGADEX}/manga/${mdId}`, { timeout: 10000 });
-    const attrs = mdInfo.data?.data?.attributes;
-    if (attrs) {
-      mangaTitle = attrs.title?.en || attrs.title?.ja || attrs.title?.["ja-ro"]
-        || Object.values(attrs.title || {})[0] || mangaTitle;
-    }
-  } catch (_) {}
+  let pages = [];
+  let source = "";
+  let chapterTitle = "";
+  let langLabel = "عربي";
 
-  const chapter = await findChapter(mdId, chapterNum);
-  if (!chapter) {
-    unsendWaiting();
-    return message.reply(`❌ الفصل ${chapterNum} غير متاح لـ "${mangaTitle}".\nجرب .مانغا ${query} لرؤية كل الفصول المتاحة.`);
+  for (const name of searchNames) {
+    const asqResults = await search3asq(name);
+    if (!asqResults.length) continue;
+
+    const asqSlug = asqResults[0].slug;
+    mangaTitle = asqResults[0].title || mangaTitle;
+    const allChapters = await get3asqChapters(asqSlug);
+    const target = parseFloat(chapterNum);
+    const found = allChapters.find(c => c.num === target);
+
+    if (found) {
+      pages = await get3asqPages(found.url);
+      if (pages.length) {
+        source = "3asq.org";
+        chapterTitle = found.title || "";
+        break;
+      }
+    }
   }
 
-  const pages = await getChapterPages(chapter.id);
+  if (!pages.length) {
+    for (const name of searchNames) {
+      const mdId = await searchMangaDex(name);
+      if (!mdId) continue;
+
+      try {
+        const mdInfo = await axios.get(`${MANGADEX}/manga/${mdId}`, { timeout: 10000 });
+        const attrs = mdInfo.data?.data?.attributes;
+        if (attrs) {
+          mangaTitle = attrs.title?.en || attrs.title?.ja || Object.values(attrs.title || {})[0] || mangaTitle;
+        }
+      } catch (_) {}
+
+      const result = await findMangaDexChapter(mdId, chapterNum);
+      if (result) {
+        pages = await getMangaDexPages(result.chapter.id);
+        if (pages.length) {
+          source = "MangaDex";
+          chapterTitle = result.chapter.attributes?.title || "";
+          const langMap = { ar: "عربي", en: "إنجليزي", ja: "ياباني", ko: "كوري", zh: "صيني", fr: "فرنسي", es: "إسباني", it: "إيطالي", pt: "برتغالي", "pt-br": "برتغالي", de: "ألماني", ru: "روسي", tr: "تركي", pl: "بولندي" };
+          langLabel = langMap[result.lang] || result.lang || "غير معروف";
+          break;
+        }
+      }
+    }
+  }
+
   if (!pages.length) {
     unsendWaiting();
-    return message.reply(`❌ تعذر تحميل صفحات الفصل ${chapterNum}.`);
+    return message.reply(
+      `❌ الفصل ${chapterNum} غير متاح لـ "${mangaTitle}".\n` +
+      `تم البحث في: 3asq.org + MangaDex\n` +
+      `جرب .مانغا ${query} لرؤية الفصول المتاحة.`
+    );
   }
-
-  const langMap = { ar: "عربي", en: "إنجليزي", ja: "ياباني", ko: "كوري", zh: "صيني", "zh-hk": "صيني", es: "إسباني", "es-la": "إسباني", fr: "فرنسي", it: "إيطالي", pt: "برتغالي", "pt-br": "برتغالي", de: "ألماني", ru: "روسي", tr: "تركي", pl: "بولندي", th: "تايلندي", vi: "فيتنامي", id: "إندونيسي", ms: "ماليزي", hi: "هندي", uk: "أوكراني" };
-  const langLabel = langMap[chapter.attributes?.translatedLanguage] || chapter.attributes?.translatedLanguage || "غير معروف";
 
   unsendWaiting();
 
@@ -378,8 +418,9 @@ async function handleChapterRequest(message, api, query, chapterNum, unsendWaiti
     `   📖 ⌯ 𝕭⃟𝗹⃪𝗮⃪𝗰⃪𝐤̰ 𝗠𝗮𝗻𝗴𝗮\n` +
     `╰━━━━━━━━━━━━━━━━━╯\n\n` +
     `📌 ${mangaTitle}\n` +
-    `📄 الفصل ${chapterNum}${chapter.attributes?.title ? " — " + chapter.attributes.title : ""}\n` +
+    `📄 الفصل ${chapterNum}${chapterTitle ? " — " + chapterTitle : ""}\n` +
     `🌐 اللغة: ${langLabel}\n` +
+    `🌍 المصدر: ${source}\n` +
     `📑 عدد الصفحات: ${pages.length}\n` +
     `\n⏬ جاري إرسال الصفحات...`
   );
