@@ -167,7 +167,7 @@ module.exports = {
       if (videoMsg && videoMsg.messageID) {
         setTimeout(() => {
           api.unsendMessage(videoMsg.messageID);
-        }, 7000);
+        }, 15000);
       }
     }
   },
