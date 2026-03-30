@@ -131,16 +131,15 @@ async function getAniListTitle(query) {
   } catch (_) { return null; }
 }
 
-async function getAvailableChapters(mdId) {
+async function getAvailableChapters(mdId, lang) {
   const all = [];
   let offset = 0;
   const limit = 100;
   try {
     while (true) {
-      const res = await axios.get(`${MANGADEX}/chapter`, {
-        params: { manga: mdId, "translatedLanguage[]": "ar", "order[chapter]": "desc", limit, offset },
-        timeout: 12000
-      });
+      const params = { manga: mdId, "order[chapter]": "desc", limit, offset };
+      if (lang) params["translatedLanguage[]"] = lang;
+      const res = await axios.get(`${MANGADEX}/chapter`, { params, timeout: 12000 });
       const data = res.data?.data || [];
       all.push(...data);
       if (data.length < limit || all.length >= res.data?.total) break;
@@ -150,10 +149,37 @@ async function getAvailableChapters(mdId) {
   return all;
 }
 
+async function getAllChaptersMultiLang(mdId) {
+  const arChapters = await getAvailableChapters(mdId, "ar");
+  const arNums = new Set(arChapters.map(c => c.attributes?.chapter).filter(Boolean).map(n => String(parseFloat(n))));
+
+  const enChapters = await getAvailableChapters(mdId, "en");
+  const enOnly = enChapters.filter(c => {
+    const ch = c.attributes?.chapter;
+    return ch && !arNums.has(String(parseFloat(ch)));
+  });
+
+  return { arChapters, enOnly, arNums };
+}
+
 async function findChapter(mdId, chapterNum) {
+  const langPriority = ["ar", "en"];
+  for (const lang of langPriority) {
+    try {
+      const res = await axios.get(`${MANGADEX}/chapter`, {
+        params: { manga: mdId, chapter: chapterNum, "translatedLanguage[]": lang, "order[chapter]": "asc", limit: 20 },
+        timeout: 10000
+      });
+      const chapters = (res.data?.data || []).filter(c => {
+        const ch = c.attributes?.chapter;
+        return ch && String(parseFloat(ch)) === String(parseFloat(chapterNum));
+      });
+      if (chapters.length) return chapters[0];
+    } catch (_) {}
+  }
   try {
     const res = await axios.get(`${MANGADEX}/chapter`, {
-      params: { manga: mdId, chapter: chapterNum, "translatedLanguage[]": "ar", "order[chapter]": "asc", limit: 20 },
+      params: { manga: mdId, chapter: chapterNum, "order[chapter]": "asc", limit: 20 },
       timeout: 10000
     });
     const chapters = (res.data?.data || []).filter(c => {
@@ -161,8 +187,8 @@ async function findChapter(mdId, chapterNum) {
       return ch && String(parseFloat(ch)) === String(parseFloat(chapterNum));
     });
     if (chapters.length) return chapters[0];
-    return null;
-  } catch (_) { return null; }
+  } catch (_) {}
+  return null;
 }
 
 async function getChapterPages(chapterId) {
@@ -254,7 +280,7 @@ async function handleInfoRequest(message, api, query, unsendWaiting) {
   const genres = m.genres?.slice(0, 5).join(" • ") || "-";
   const rawDesc = cleanDesc(m.description);
 
-  const availChapters = mdId ? await getAvailableChapters(mdId) : [];
+  const chapterData = mdId ? await getAllChaptersMultiLang(mdId) : { arChapters: [], enOnly: [], arNums: new Set() };
 
   const [descAr, coverPath] = await Promise.all([
     translateToArabic(rawDesc),
@@ -264,14 +290,19 @@ async function handleInfoRequest(message, api, query, unsendWaiting) {
   ]);
 
   let chaptersText = "";
-  if (availChapters.length) {
-    const nums = availChapters
-      .map(c => c.attributes?.chapter)
-      .filter(Boolean)
-      .map(n => parseFloat(n));
-    const unique = [...new Set(nums)].sort((a, b) => a - b);
-    chaptersText = `\n\n📚 الفصول المتاحة بالعربي (${unique.length} فصل):\n`;
-    chaptersText += unique.map(n => `فصل ${n}`).join(" • ");
+  const arNums = [...new Set(chapterData.arChapters.map(c => c.attributes?.chapter).filter(Boolean).map(n => parseFloat(n)))].sort((a, b) => a - b);
+  const enNums = [...new Set(chapterData.enOnly.map(c => c.attributes?.chapter).filter(Boolean).map(n => parseFloat(n)))].sort((a, b) => a - b);
+
+  if (arNums.length || enNums.length) {
+    chaptersText = "\n";
+    if (arNums.length) {
+      chaptersText += `\n📚 فصول بالعربي (${arNums.length}):\n`;
+      chaptersText += arNums.map(n => `فصل ${n}`).join(" • ");
+    }
+    if (enNums.length) {
+      chaptersText += `\n\n📗 فصول بالإنجليزي فقط (${enNums.length}):\n`;
+      chaptersText += enNums.map(n => `فصل ${n}`).join(" • ");
+    }
     chaptersText += `\n\n💡 لقراءة فصل اكتب:\n.مانغا ${query} فصل [رقم]`;
   }
 
@@ -327,19 +358,8 @@ async function handleChapterRequest(message, api, query, chapterNum, unsendWaiti
 
   const chapter = await findChapter(mdId, chapterNum);
   if (!chapter) {
-    const avail = await getAvailableChapters(mdId);
-    const nums = avail.map(c => c.attributes?.chapter).filter(Boolean)
-      .map(n => parseFloat(n));
-    const unique = [...new Set(nums)].sort((a, b) => a - b);
     unsendWaiting();
-    let msg = `❌ الفصل ${chapterNum} غير متاح بالعربي لـ "${mangaTitle}".\n`;
-    if (unique.length) {
-      msg += `\n📚 الفصول المتاحة بالعربي (${unique.length} فصل):\n` + unique.map(n => `فصل ${n}`).join(" • ");
-      msg += `\n\n💡 جرب: .مانغا ${query} فصل ${unique[0]}`;
-    } else {
-      msg += `\n⚠ لا توجد فصول مترجمة بالعربي لهذه المانغا على MangaDex.`;
-    }
-    return message.reply(msg);
+    return message.reply(`❌ الفصل ${chapterNum} غير متاح لـ "${mangaTitle}".\nجرب .مانغا ${query} لرؤية كل الفصول المتاحة.`);
   }
 
   const pages = await getChapterPages(chapter.id);
