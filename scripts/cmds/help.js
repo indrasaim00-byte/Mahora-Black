@@ -60,7 +60,11 @@ function getCmdCategory(cmd) {
 }
 
 function getCmdUsage(cmd, prefix) {
-    const guide = cmd.config.guide || cmd.config.usages || "";
+    let guide = cmd.config.guide || cmd.config.usages || "";
+    if (typeof guide === "object" && guide !== null) {
+        guide = guide.ar || guide.en || guide.vi || Object.values(guide)[0] || "";
+    }
+    if (typeof guide !== "string") guide = "";
     return guide.replace(/\{pn\}/g, cmd.config.name).replace(/\{p\}/g, prefix) || cmd.config.name;
 }
 

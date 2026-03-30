@@ -124,16 +124,25 @@ function createGetText2(langCode, pathCustomLang, prefix, command) {
         const commandType = command.config.countDown ? "command" : "command event";
         const commandName = command.config.name;
         let customLang = {};
+        let fallbackLang = {};
         let getText2 = () => { };
         if (fs.existsSync(pathCustomLang))
                 customLang = require(pathCustomLang)[commandName]?.text || {};
+        if (langCode !== "en") {
+                const enPath = pathCustomLang.replace(`${langCode}.js`, "en.js");
+                if (fs.existsSync(enPath)) {
+                        try { fallbackLang = require(enPath)[commandName]?.text || {}; } catch (e) {}
+                }
+        }
         if (command.langs || customLang || {}) {
                 getText2 = function (key, ...args) {
-                        let lang = command.langs?.[langCode]?.[key] || customLang[key] || "";
+                        let lang = command.langs?.[langCode]?.[key] || customLang[key]
+                                || command.langs?.["en"]?.[key] || command.langs?.["vi"]?.[key]
+                                || fallbackLang[key] || "";
                         lang = replaceShortcutInLang(lang, prefix, commandName);
                         for (let i = args.length - 1; i >= 0; i--)
                                 lang = lang.replace(new RegExp(`%${i + 1}`, "g"), args[i]);
-                        return lang || `❌ Can't find text on language "${langCode}" for ${commandType} "${commandName}" with key "${key}"`;
+                        return lang;
                 };
         }
         return getText2;
