@@ -144,13 +144,18 @@ async function getAvailableChapters(mdId, limit = 10) {
 async function findChapter(mdId, chapterNum) {
   try {
     const res = await axios.get(`${MANGADEX}/chapter`, {
-      params: { manga: mdId, chapter: chapterNum, "order[chapter]": "asc", limit: 5 },
+      params: { manga: mdId, chapter: chapterNum, "order[chapter]": "asc", limit: 20 },
       timeout: 10000
     });
-    const chapters = res.data?.data || [];
+    const chapters = (res.data?.data || []).filter(c => {
+      const ch = c.attributes?.chapter;
+      return ch && String(parseFloat(ch)) === String(parseFloat(chapterNum));
+    });
+    if (!chapters.length) return null;
     return chapters.find(c => c.attributes?.translatedLanguage === "ar")
       || chapters.find(c => c.attributes?.translatedLanguage === "en")
-      || chapters[0] || null;
+      || chapters.find(c => ["fr", "es", "es-la", "it", "pt-br"].includes(c.attributes?.translatedLanguage))
+      || chapters[0];
   } catch (_) { return null; }
 }
 
@@ -191,7 +196,7 @@ module.exports = {
     const input = args.join(" ").trim();
     if (!input) return message.reply("🔍 اكتب اسم المانغا بعد الأمر.\nمثال: .مانغا one piece\nلقراءة فصل: .مانغا one piece فصل 1");
 
-    const epMatch = input.match(/(.+?)\s+فصل\s+(\d+)/i) || input.match(/(.+?)\s+ch(?:apter)?\s+(\d+)/i);
+    const epMatch = input.match(/(.+?)\s+(?:ال)?فصل\s+(\d+)/i) || input.match(/(.+?)\s+ch(?:apter)?\s+(\d+)/i) || input.match(/(.+?)\s+(\d+)$/i);
     const isChapter = !!epMatch;
     const query = epMatch ? epMatch[1].trim() : input;
     const chapterNum = epMatch ? epMatch[2] : null;
@@ -304,10 +309,29 @@ async function handleChapterRequest(message, api, query, chapterNum, unsendWaiti
     return message.reply(`❌ لم أجد "${query}" على MangaDex.\nجرب كتابة الاسم بالإنجليزي.`);
   }
 
+  let mangaTitle = aniTitle?.english || aniTitle?.romaji || query;
+  try {
+    const mdInfo = await axios.get(`${MANGADEX}/manga/${mdId}`, { timeout: 10000 });
+    const attrs = mdInfo.data?.data?.attributes;
+    if (attrs) {
+      mangaTitle = attrs.title?.en || attrs.title?.ja || attrs.title?.["ja-ro"]
+        || Object.values(attrs.title || {})[0] || mangaTitle;
+    }
+  } catch (_) {}
+
   const chapter = await findChapter(mdId, chapterNum);
   if (!chapter) {
+    const avail = await getAvailableChapters(mdId, 20);
+    const nums = avail.map(c => c.attributes?.chapter).filter(Boolean)
+      .map(n => parseFloat(n));
+    const unique = [...new Set(nums)].sort((a, b) => b - a).slice(0, 15);
     unsendWaiting();
-    return message.reply(`❌ الفصل ${chapterNum} غير متاح.\nجرب .مانغا ${query} لرؤية الفصول المتاحة.`);
+    let msg = `❌ الفصل ${chapterNum} غير متاح لـ "${mangaTitle}".\n`;
+    if (unique.length) {
+      msg += `\n📚 الفصول المتاحة:\n` + unique.map(n => `  📄 فصل ${n}`).join("\n");
+      msg += `\n\n💡 جرب: .مانغا ${query} فصل ${unique[unique.length - 1]}`;
+    }
+    return message.reply(msg);
   }
 
   const pages = await getChapterPages(chapter.id);
@@ -325,6 +349,7 @@ async function handleChapterRequest(message, api, query, chapterNum, unsendWaiti
     `╭━━━━━━━━━━━━━━━━━╮\n` +
     `   📖 ⌯ 𝕭⃟𝗹⃪𝗮⃪𝗰⃪𝐤̰ 𝗠𝗮𝗻𝗴𝗮\n` +
     `╰━━━━━━━━━━━━━━━━━╯\n\n` +
+    `📌 ${mangaTitle}\n` +
     `📄 الفصل ${chapterNum}${chapter.attributes?.title ? " — " + chapter.attributes.title : ""}\n` +
     `🌐 اللغة: ${langLabel}\n` +
     `📑 عدد الصفحات: ${pages.length}\n` +
