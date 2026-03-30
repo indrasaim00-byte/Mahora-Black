@@ -154,14 +154,21 @@ module.exports = {
     this.sentVideos.push(randomVideo);
 
     if (senderID !== null) {
-      message.reply({
-        body: 'Dekh beta 😂',
-        attachment: await global.utils.getStreamFromURL(randomVideo),
+      const stream = await global.utils.getStreamFromURL(randomVideo);
+      const videoMsg = await new Promise(resolve => {
+        api.sendMessage({
+          body: 'Dekh beta 😂',
+          attachment: stream,
+        }, event.threadID, (err, info) => resolve(info || null));
       });
 
-      setTimeout(() => {
-        api.unsendMessage(loadingMessage.messageID);
-      }, 50000);
+      api.unsendMessage(loadingMessage.messageID);
+
+      if (videoMsg && videoMsg.messageID) {
+        setTimeout(() => {
+          api.unsendMessage(videoMsg.messageID);
+        }, 7000);
+      }
     }
   },
 };
