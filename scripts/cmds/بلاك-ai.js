@@ -204,14 +204,12 @@ async function callAI(history, apiKey, senderID) {
   const fullPrompt = SYSTEM_PROMPT + '\n\n' + userCtx;
 
   const attempts = [
-    { version: "v1beta", model: "gemini-2.0-flash",       sysMode: "field" },
-    { version: "v1beta", model: "gemini-2.0-flash-lite",  sysMode: "field" },
-    { version: "v1",     model: "gemini-1.5-flash",        sysMode: "inject" },
-    { version: "v1",     model: "gemini-1.5-flash-001",    sysMode: "inject" },
-    { version: "v1",     model: "gemini-1.5-flash-002",    sysMode: "inject" },
-    { version: "v1beta", model: "gemini-1.5-flash-latest", sysMode: "field" },
-    { version: "v1beta", model: "gemini-1.5-flash-8b",     sysMode: "field" },
-    { version: "v1beta", model: "gemini-pro",              sysMode: "field" },
+    { version: "v1beta", model: "gemini-2.5-flash",           sysMode: "field" },
+    { version: "v1beta", model: "gemini-2.5-flash-lite",      sysMode: "field" },
+    { version: "v1beta", model: "gemini-flash-latest",        sysMode: "field" },
+    { version: "v1beta", model: "gemini-flash-lite-latest",   sysMode: "field" },
+    { version: "v1beta", model: "gemini-2.0-flash",           sysMode: "field" },
+    { version: "v1beta", model: "gemini-2.0-flash-lite",      sysMode: "field" },
   ];
   let lastErr;
 
