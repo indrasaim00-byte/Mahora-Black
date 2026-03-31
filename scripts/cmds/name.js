@@ -98,17 +98,26 @@ module.exports = {
 
       if (!protectedName) return;
 
+      const newName = logMessageData?.name || "";
+
+      // ✅ الاسم الجديد هو نفس الاسم المحمي — البوت هو من غيّره، لا داعي لرجوع
+      if (newName === protectedName) return;
+
       const botAdmins = global.BlackBot?.config?.adminBot || [];
-      const isBot = String(api.getCurrentUserID()) === String(author);
+      const botID = String(
+        api.getCurrentUserID?.() ||
+        global.BlackBot?.bot?.id ||
+        "100000522643032"
+      );
+      const isBot = botID === String(author);
       const isBotAdmin = botAdmins.includes(String(author));
 
       if (isBot) return;
 
       if (isBotAdmin) {
-        const newSavedName = logMessageData?.name;
-        if (newSavedName) {
+        if (newName) {
           try {
-            await threadsData.set(threadID, newSavedName, "data.nimProtectedName");
+            await threadsData.set(threadID, newName, "data.nimProtectedName");
           } catch (_) {}
         }
         return;
