@@ -5,35 +5,47 @@ const isReverting = new Map();
 const DEBOUNCE_MS = 1200;
 const MIN_INTERVAL_MS = 4000;
 const MAX_RETRIES = 5;
+const TITLE_TIMEOUT_MS = 10000;
+
+function setTitle(api, name, threadID) {
+  return Promise.race([
+    api.setTitle(name, threadID),
+    new Promise((_, reject) =>
+      setTimeout(() => reject(new Error("setTitle timeout")), TITLE_TIMEOUT_MS)
+    )
+  ]);
+}
 
 async function revertWithRetry(api, name, threadID) {
   if (isReverting.get(threadID)) return;
   isReverting.set(threadID, true);
 
-  const now = Date.now();
-  const last = lastRevertTime.get(threadID) || 0;
-  const wait = Math.max(0, MIN_INTERVAL_MS - (now - last));
-  if (wait > 0) await new Promise(r => setTimeout(r, wait));
+  try {
+    const now = Date.now();
+    const last = lastRevertTime.get(threadID) || 0;
+    const wait = Math.max(0, MIN_INTERVAL_MS - (now - last));
+    if (wait > 0) await new Promise(r => setTimeout(r, wait));
 
-  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
-    try {
-      await api.setTitle(name, threadID);
-      lastRevertTime.set(threadID, Date.now());
-      break;
-    } catch (err) {
-      if (attempt < MAX_RETRIES) {
-        await new Promise(r => setTimeout(r, attempt * 3000));
+    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+      try {
+        await setTitle(api, name, threadID);
+        lastRevertTime.set(threadID, Date.now());
+        break;
+      } catch (err) {
+        if (attempt < MAX_RETRIES) {
+          await new Promise(r => setTimeout(r, attempt * 3000));
+        }
       }
     }
+  } finally {
+    isReverting.set(threadID, false);
   }
-
-  isReverting.set(threadID, false);
 }
 
 module.exports = {
   config: {
     name: "نيم",
-    version: "5.1",
+    version: "5.2",
     author: "edit",
     role: 1,
     shortDescription: "تغيير اسم المجموعة مع حماية صارمة",
@@ -42,9 +54,9 @@ module.exports = {
     countDown: 3
   },
 
-  onStart: async ({ api, event, args, threadsData }) => {
+  onStart: async ({ api, event, args, threadsData, message }) => {
     const { threadID } = event;
-    if (!args[0]) return;
+    if (!args[0]) return message.reply("⚠️ اكتب الاسم الجديد بعد الأمر.");
 
     const newName = args.join(" ").trim();
 
@@ -56,13 +68,21 @@ module.exports = {
       }
     } catch (_) {}
 
+    let done = false;
     for (let attempt = 1; attempt <= 3; attempt++) {
       try {
-        await api.setTitle(newName, threadID);
+        await setTitle(api, newName, threadID);
+        done = true;
         break;
-      } catch (err) {
+      } catch (_) {
         if (attempt < 3) await new Promise(r => setTimeout(r, attempt * 2000));
       }
+    }
+
+    if (done) {
+      message.reply(`✅ تم تغيير الاسم إلى:\n${newName}`);
+    } else {
+      message.reply("❌ فشل تغيير الاسم. تأكد أن البوت أدمن في المجموعة.");
     }
   },
 
@@ -79,18 +99,18 @@ module.exports = {
       if (!protectedName) return;
 
       const botAdmins = global.BlackBot?.config?.adminBot || [];
-      const isBot = api.getCurrentUserID() === author;
-      const isBotAdmin = botAdmins.includes(author);
+      const isBot = String(api.getCurrentUserID()) === String(author);
+      const isBotAdmin = botAdmins.includes(String(author));
 
       if (isBot) return;
 
       if (isBotAdmin) {
-        try {
-          const newSavedName = logMessageData?.name;
-          if (newSavedName) {
+        const newSavedName = logMessageData?.name;
+        if (newSavedName) {
+          try {
             await threadsData.set(threadID, newSavedName, "data.nimProtectedName");
-          }
-        } catch (_) {}
+          } catch (_) {}
+        }
         return;
       }
 
