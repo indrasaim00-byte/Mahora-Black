@@ -1,7 +1,7 @@
 module.exports = {
   config: {
     name: "نيم",
-    version: "3.1",
+    version: "3.2",
     author: "edit",
     role: 1,
     shortDescription: "تغيير اسم المجموعة",
@@ -10,20 +10,22 @@ module.exports = {
     countDown: 3
   },
 
-  onStart: async ({ api, event, args, message }) => {
+  onStart: async ({ api, event, args, threadsData }) => {
     const { threadID } = event;
-
-    if (!args[0]) {
-      return message.reply("📝 اكتب الاسم الجديد بعد الأمر.\nمثال: .نيم اسم الجروب");
-    }
+    if (!args[0]) return;
 
     const newName = args.join(" ").trim();
 
+    // حفّظ الاسم الجديد كاسم محمي قبل التغيير حتى protect لا يعيده
+    try {
+      const protectData = await threadsData.get(threadID, "data.protect");
+      if (protectData?.enable) {
+        await threadsData.set(threadID, newName, "data.protect.name");
+      }
+    } catch (_) {}
+
     try {
       await api.setTitle(newName, threadID);
-      await message.reply(`✅ تم تغيير اسم الجروب إلى:\n${newName}`);
-    } catch (e) {
-      await message.reply("❌ فشل تغيير الاسم. تأكد أن البوت لديه صلاحية في الجروب.");
-    }
+    } catch (_) {}
   }
 };

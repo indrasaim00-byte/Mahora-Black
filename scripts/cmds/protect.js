@@ -55,8 +55,15 @@ module.exports = {
     const info = await api.getThreadInfo(threadID);
     const isAdmin = info.adminIDs.some(e => e.id === author);
     const isBot = api.getCurrentUserID() === author;
+    const isBotAdmin = (global.BlackBot?.config?.adminBot || []).includes(author);
 
-    if (!isAdmin && !isBot) {
+    // إذا كان Bot Admin غيّر الاسم عبر .نيم → حدّث الاسم المحمي ولا ترجعه
+    if (isBotAdmin && logMessageType === "log:thread-name") {
+      await threadsData.set(threadID, logMessageData.name || "", "data.protect.name");
+      return;
+    }
+
+    if (!isAdmin && !isBot && !isBotAdmin) {
       // NAME
       if (logMessageType === "log:thread-name") {
         api.setTitle(protectData.name, threadID);
