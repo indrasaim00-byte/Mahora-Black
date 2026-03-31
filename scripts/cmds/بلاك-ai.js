@@ -203,13 +203,20 @@ async function callAI(history, apiKey, senderID) {
   const userCtx = buildUserContext(senderID);
   const fullPrompt = SYSTEM_PROMPT + '\n\n' + userCtx;
 
-  const models = ["gemini-2.0-flash", "gemini-1.5-flash"];
+  const attempts = [
+    { version: "v1beta", model: "gemini-2.0-flash" },
+    { version: "v1beta", model: "gemini-2.0-flash-lite" },
+    { version: "v1",     model: "gemini-1.5-flash" },
+    { version: "v1beta", model: "gemini-1.5-flash-latest" },
+    { version: "v1beta", model: "gemini-1.5-flash-8b" },
+    { version: "v1beta", model: "gemini-pro" },
+  ];
   let lastErr;
 
-  for (const model of models) {
+  for (const { version, model } of attempts) {
     try {
       const response = await axios.post(
-        `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
+        `https://generativelanguage.googleapis.com/${version}/models/${model}:generateContent?key=${apiKey}`,
         {
           system_instruction: { parts: [{ text: fullPrompt }] },
           contents: history,
@@ -221,10 +228,14 @@ async function callAI(history, apiKey, senderID) {
         { headers: { "Content-Type": "application/json" }, timeout: 20000 }
       );
       const text = response.data?.candidates?.[0]?.content?.parts?.[0]?.text;
-      if (text) return text;
+      if (text) {
+        console.log(`[بلاك] Using model: ${model} (${version})`);
+        return text;
+      }
     } catch (err) {
       lastErr = err;
-      console.error(`Gemini model ${model} failed:`, err?.response?.data?.error?.message || err.message);
+      const msg = err?.response?.data?.error?.message || err.message;
+      console.error(`[بلاك] ${model} (${version}) failed: ${msg}`);
     }
   }
 
