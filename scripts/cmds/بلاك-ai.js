@@ -147,13 +147,21 @@ function buildUserContext(senderID) {
 }
 
 function getApiKey() {
-  if (process.env.GROQ_API_KEY) return process.env.GROQ_API_KEY;
-  if (process.env.GEMINI_API_KEY) return process.env.GEMINI_API_KEY;
-  if (process.env.GOOGLE_API_KEY) return process.env.GOOGLE_API_KEY;
+  const envKey =
+    process.env.GEMINI_API_KEY ||
+    process.env.GOOGLE_API_KEY ||
+    process.env.GROQ_API_KEY ||
+    "";
+  if (envKey.trim()) return envKey.trim();
   try {
     const cfgPath = require("path").join(process.cwd(), "config.json");
     const cfg = JSON.parse(require("fs").readFileSync(cfgPath, "utf-8"));
-    return cfg.apiKeys?.groq || cfg.apiKeys?.gemini || null;
+    const fromCfg =
+      cfg.apiKeys?.gemini ||
+      cfg.apiKeys?.google ||
+      cfg.apiKeys?.groq ||
+      "";
+    return fromCfg.trim() || null;
   } catch (_) { return null; }
 }
 
@@ -197,21 +205,32 @@ async function callAI(history, apiKey, senderID) {
   const userCtx = buildUserContext(senderID);
   const fullPrompt = SYSTEM_PROMPT + '\n\n' + userCtx;
 
-  const response = await axios.post(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
-    {
-      system_instruction: { parts: [{ text: fullPrompt }] },
-      contents: history,
-      generationConfig: {
-        temperature: 0.85,
-        maxOutputTokens: 300,
-        thinkingConfig: { thinkingBudget: 0 }
-      }
-    },
-    { headers: { "Content-Type": "application/json" }, timeout: 20000 }
-  );
+  const models = ["gemini-2.0-flash", "gemini-1.5-flash"];
+  let lastErr;
 
-  return response.data?.candidates?.[0]?.content?.parts?.[0]?.text;
+  for (const model of models) {
+    try {
+      const response = await axios.post(
+        `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
+        {
+          system_instruction: { parts: [{ text: fullPrompt }] },
+          contents: history,
+          generationConfig: {
+            temperature: 0.85,
+            maxOutputTokens: 300
+          }
+        },
+        { headers: { "Content-Type": "application/json" }, timeout: 20000 }
+      );
+      const text = response.data?.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (text) return text;
+    } catch (err) {
+      lastErr = err;
+      console.error(`AI model ${model} failed:`, err?.response?.data?.error?.message || err.message);
+    }
+  }
+
+  throw lastErr || new Error("All models failed");
 }
 
 async function sendWithTypingDelay(api, text, threadID, callback, messageID) {
@@ -236,7 +255,13 @@ async function handleCopyThreat(api, threadID, messageID) {
 async function processMessage(api, event, commandName, historyKey, input) {
   const { threadID, messageID, senderID } = event;
   const apiKey = getApiKey();
-  if (!apiKey) return;
+  if (!apiKey) {
+    const adminIDs = global.BlackBot?.config?.adminBot || [];
+    if (adminIDs.includes(senderID)) {
+      api.sendMessage("⚠️ لا يوجد مفتاح Gemini API.\nضع المفتاح في config.json → apiKeys.gemini", threadID, null, messageID);
+    }
+    return;
+  }
 
   if (isCopyThreat(input)) {
     await handleCopyThreat(api, threadID, messageID);
