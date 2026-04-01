@@ -4,6 +4,7 @@ const DEVELOPER_ID = "61583835186508";
 
 const SYSTEM_PROMPT = `أنت بلاك، بوت دردشة جزائري يتحدث كل اللهجات العربية، ومطوّرك اسمه سايم (ID فيسبوك: ${DEVELOPER_ID}).
 - إذا كان مُعرّف المُرسل هو ${DEVELOPER_ID} فهو سايم بشكل مؤكد 100%، تعامل معه كمطوّرك مباشرة بدون أي تأكيد.
+- كل مستخدم يتكلم معك يملك رقماً فريداً (مثال: المستخدم #1، المستخدم #2...). سايم دائماً هو المستخدم #0. هذه الأرقام ثابتة طوال الجلسة لتعرف من هو كل شخص.
 
 شخصيتك: رجل متمكن، خشن بطبعه، كلامك ثقيل ومحسوب. تتكلم بعقلانية وثقة عالية، ما تهبل ولا تتكلم بخفة. ردودك مباشرة وفيها وزن، مو كلام فارغ.
 
@@ -137,7 +138,16 @@ const COPY_THREAT_RESPONSES = [
 
 const conversationHistory = new Map();
 const userProfiles = new Map();
+const userNumbers = new Map();
+let userCounter = 1;
 
+function getUserNumber(senderID) {
+  if (senderID === DEVELOPER_ID) return 0;
+  if (!userNumbers.has(senderID)) {
+    userNumbers.set(senderID, userCounter++);
+  }
+  return userNumbers.get(senderID);
+}
 
 function getUserRole(senderID) {
   if (senderID === DEVELOPER_ID) return 'developer';
@@ -171,16 +181,18 @@ function getProfile(senderID) {
 
 function buildUserContext(senderID) {
   const profile = getProfile(senderID);
+  const userNum = getUserNumber(senderID);
   const lines = [];
 
-  lines.push(`[ ID المُرسل الحالي: ${senderID} ]`);
-
   if (profile.role === 'developer') {
-    lines.push(`[ ✅ هذا الشخص هو مطوّرك سايم — تم التأكد بالـ ID (${senderID} = ${DEVELOPER_ID}). تعامل معه كمطوّرك مباشرة بودّ وثقة. هو من بناك وصمّمك. يمكنه أن يسألك عن أي شيء يخص البوت وأنت تجاوبه بكل تفاصيل. لا تشتم معه إلا إذا بدأ مزاحاً. ]`);
-    lines.push(`[ إذا سألك سايم عن البوت أو أوامره أو إعداداته، اشرح له بشكل واضح ومفصّل — هو المطوّر ويستحق جواباً كاملاً. ]`);
+    lines.push(`[ 👤 المُرسل: المستخدم #${userNum} (سايم — مطوّرك، ID: ${senderID}) ]`);
+    lines.push(`[ ✅ هذا هو سايم بشكل مؤكد 100%. تعامل معه بودّ وثقة كمطوّرك مباشرة. هو من بناك وصمّمك. أجبه بكل تفاصيل عن البوت بدون تحفظ. لا تشتم معه إلا إذا بدأ مزاحاً. ]`);
     lines.push(getBotInfo());
   } else if (profile.role === 'admin') {
-    lines.push('[ هذا الشخص مشرف البوت: تعامل معه باحترام أكثر من المستخدم العادي. ]');
+    lines.push(`[ 👤 المُرسل: المستخدم #${userNum} (مشرف البوت، ID: ${senderID}) ]`);
+    lines.push('[ تعامل معه باحترام أكثر من المستخدم العادي. ]');
+  } else {
+    lines.push(`[ 👤 المُرسل: المستخدم #${userNum} (ID: ${senderID}) ]`);
   }
 
   if (profile.gender === 'female') {
