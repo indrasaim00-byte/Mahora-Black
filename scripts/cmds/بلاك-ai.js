@@ -4,7 +4,7 @@ const DEVELOPER_ID = "61583835186508";
 
 const SYSTEM_PROMPT = `أنت بلاك، بوت دردشة جزائري يتحدث كل اللهجات العربية، ومطوّرك اسمه سايم (ID فيسبوك: ${DEVELOPER_ID}).
 - إذا كان مُعرّف المُرسل هو ${DEVELOPER_ID} فهو سايم بشكل مؤكد 100%، تعامل معه كمطوّرك مباشرة بدون أي تأكيد.
-- كل مستخدم يتكلم معك يملك رقماً فريداً (مثال: المستخدم #1، المستخدم #2...). سايم دائماً هو المستخدم #0. هذه الأرقام ثابتة طوال الجلسة لتعرف من هو كل شخص.
+- كل مستخدم يتكلم معك يُعرَّف برقم فريد (#1، #2...) أو باسمه الحقيقي إذا عُرف. سايم دائماً يُعرَّف باسمه مباشرة. إذا عرفت اسم شخص، ناده باسمه في ردودك.
 
 شخصيتك: رجل متمكن، خشن بطبعه، كلامك ثقيل ومحسوب. تتكلم بعقلانية وثقة عالية، ما تهبل ولا تتكلم بخفة. ردودك مباشرة وفيها وزن، مو كلام فارغ.
 
@@ -139,6 +139,7 @@ const COPY_THREAT_RESPONSES = [
 const conversationHistory = new Map();
 const userProfiles = new Map();
 const userNumbers = new Map();
+const userNames = new Map();
 let userCounter = 1;
 
 function getUserNumber(senderID) {
@@ -147,6 +148,43 @@ function getUserNumber(senderID) {
     userNumbers.set(senderID, userCounter++);
   }
   return userNumbers.get(senderID);
+}
+
+function getUserLabel(senderID) {
+  if (senderID === DEVELOPER_ID) return "سايم";
+  if (userNames.has(senderID)) return userNames.get(senderID);
+  return `#${getUserNumber(senderID)}`;
+}
+
+async function fetchUserName(api, senderID) {
+  if (userNames.has(senderID)) return;
+  if (senderID === DEVELOPER_ID) { userNames.set(senderID, "سايم"); return; }
+  try {
+    const info = await api.getUserInfo(senderID);
+    const name = info?.[senderID]?.name;
+    if (name && name.trim()) userNames.set(senderID, name.trim());
+  } catch (_) {}
+}
+
+function detectNameFromText(text, senderID) {
+  if (senderID === DEVELOPER_ID) return;
+  if (userNames.has(senderID)) return;
+  const patterns = [
+    /(?:اسمي|اسمك|انا|أنا)\s+(?:هو\s+)?([^\s،,.\n]{2,20})/i,
+    /(?:ناديني|كلمني)\s+(?:بـ?|بـ)?\s*([^\s،,.\n]{2,20})/i,
+    /^([^\s،,.\n]{2,15})\s+(?:هنا|معك|هو أنا)/i,
+  ];
+  for (const p of patterns) {
+    const m = text.match(p);
+    if (m && m[1]) {
+      const name = m[1].trim();
+      const skip = ["بلاك","black","بوت","انا","أنا","ياخي","هههه","مرحبا","اهلا","هلا"];
+      if (!skip.some(s => name.toLowerCase().includes(s))) {
+        userNames.set(senderID, name);
+        return;
+      }
+    }
+  }
 }
 
 function getUserRole(senderID) {
@@ -184,15 +222,17 @@ function buildUserContext(senderID) {
   const userNum = getUserNumber(senderID);
   const lines = [];
 
+  const label = getUserLabel(senderID);
+
   if (profile.role === 'developer') {
-    lines.push(`[ 👤 المُرسل: المستخدم #${userNum} (سايم — مطوّرك، ID: ${senderID}) ]`);
+    lines.push(`[ 👤 المُرسل: ${label} (مطوّرك، ID: ${senderID}) ]`);
     lines.push(`[ ✅ هذا هو سايم بشكل مؤكد 100%. تعامل معه بودّ وثقة كمطوّرك مباشرة. هو من بناك وصمّمك. أجبه بكل تفاصيل عن البوت بدون تحفظ. لا تشتم معه إلا إذا بدأ مزاحاً. ]`);
     lines.push(getBotInfo());
   } else if (profile.role === 'admin') {
-    lines.push(`[ 👤 المُرسل: المستخدم #${userNum} (مشرف البوت، ID: ${senderID}) ]`);
+    lines.push(`[ 👤 المُرسل: ${label} (مشرف البوت، ID: ${senderID}) ]`);
     lines.push('[ تعامل معه باحترام أكثر من المستخدم العادي. ]');
   } else {
-    lines.push(`[ 👤 المُرسل: المستخدم #${userNum} (ID: ${senderID}) ]`);
+    lines.push(`[ 👤 المُرسل: ${label} (ID: ${senderID}) ]`);
   }
 
   if (profile.gender === 'female') {
@@ -359,6 +399,9 @@ async function processMessage(api, event, commandName, historyKey, input) {
   const profile = getProfile(senderID);
   const detectedGender = detectGenderFromText(input);
   if (detectedGender && profile.gender === 'unknown') profile.gender = detectedGender;
+
+  fetchUserName(api, senderID).catch(() => {});
+  detectNameFromText(input, senderID);
 
   if (!conversationHistory.has(historyKey)) conversationHistory.set(historyKey, []);
   const history = conversationHistory.get(historyKey);
