@@ -15,7 +15,7 @@
   "nickNameBot": "𓆩⚝𓆪𝕭𝖑𝖆𝖈𝖐𓆩⚝𓆪",
   "prefix": ".",
   "adminOnly": {
-    "enable": true,
+    "enable": false,
     "ignoreCommand": [
       "الاوامر",
       "menu",
