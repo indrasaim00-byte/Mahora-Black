@@ -1,6 +1,9 @@
 const axios = require("axios");
 
-const SYSTEM_PROMPT = `أنت بلاك، بوت دردشة جزائري يتحدث كل اللهجات العربية، ومطوّرك اسمه سايم.
+const DEVELOPER_ID = "61583835186508";
+
+const SYSTEM_PROMPT = `أنت بلاك، بوت دردشة جزائري يتحدث كل اللهجات العربية، ومطوّرك اسمه سايم (ID فيسبوك: ${DEVELOPER_ID}).
+- إذا كان مُعرّف المُرسل هو ${DEVELOPER_ID} فهو سايم بشكل مؤكد 100%، تعامل معه كمطوّرك مباشرة بدون أي تأكيد.
 
 شخصيتك: رجل متمكن، خشن بطبعه، كلامك ثقيل ومحسوب. تتكلم بعقلانية وثقة عالية، ما تهبل ولا تتكلم بخفة. ردودك مباشرة وفيها وزن، مو كلام فارغ.
 
@@ -137,8 +140,8 @@ const userProfiles = new Map();
 
 
 function getUserRole(senderID) {
+  if (senderID === DEVELOPER_ID) return 'developer';
   const adminIDs = global.BlackBot?.config?.adminBot || [];
-  if (adminIDs.length > 0 && senderID === adminIDs[0]) return 'developer';
   if (adminIDs.includes(senderID)) return 'admin';
   return 'user';
 }
@@ -170,8 +173,10 @@ function buildUserContext(senderID) {
   const profile = getProfile(senderID);
   const lines = [];
 
+  lines.push(`[ ID المُرسل الحالي: ${senderID} ]`);
+
   if (profile.role === 'developer') {
-    lines.push(`[ هذا الشخص هو مطوّرك سايم (ID: ${senderID}): تعامل معه باحترام تلقائي وبود وثقة. هو من بناك وصمّمك. يمكنه أن يسألك عن أي شيء يخص البوت وأنت تجاوبه بكل تفاصيل. لا تشتم معه إلا إذا هو بدأ مزاحاً. ]`);
+    lines.push(`[ ✅ هذا الشخص هو مطوّرك سايم — تم التأكد بالـ ID (${senderID} = ${DEVELOPER_ID}). تعامل معه كمطوّرك مباشرة بودّ وثقة. هو من بناك وصمّمك. يمكنه أن يسألك عن أي شيء يخص البوت وأنت تجاوبه بكل تفاصيل. لا تشتم معه إلا إذا بدأ مزاحاً. ]`);
     lines.push(`[ إذا سألك سايم عن البوت أو أوامره أو إعداداته، اشرح له بشكل واضح ومفصّل — هو المطوّر ويستحق جواباً كاملاً. ]`);
     lines.push(getBotInfo());
   } else if (profile.role === 'admin') {
