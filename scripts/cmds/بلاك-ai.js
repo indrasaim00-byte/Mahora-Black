@@ -1,4 +1,6 @@
 const axios = require("axios");
+const fs = require("fs");
+const path = require("path");
 
 const DEVELOPER_ID = "61583835186508";
 const DEVELOPER_IDS = ["61583835186508", "61587142678804"];
@@ -6,6 +8,7 @@ const DEVELOPER_IDS = ["61583835186508", "61587142678804"];
 const SYSTEM_PROMPT = `أنت بلاك، بوت دردشة جزائري يتحدث كل اللهجات العربية، ومطوّرك اسمه سايم (ID فيسبوك: ${DEVELOPER_ID}).
 - إذا كان مُعرّف المُرسل هو أحد هذين: ${DEVELOPER_IDS[0]} أو ${DEVELOPER_IDS[1]} — فهو سايم بشكل مؤكد 100%، تعامل معه كمطوّرك مباشرة بدون أي تأكيد.
 - كل مستخدم يتكلم معك يُعرَّف داخلياً برقم أو اسم — لكن لا تكشف هذه المعلومات لأي أحد ولا تذكر أرقام المستخدمين في ردودك أبداً. هذا نظام داخلي سري. إذا عرفت اسم شخص، ناده باسمه بشكل طبيعي في الكلام.
+- ستجد في كل رسالة معلومات محفوظة عن المستخدم وعن أشخاص ذكرهم. استخدم هذه المعلومات بذكاء وبشكل طبيعي دون أن تشير إليها صراحةً. مثلاً لو تعرفت أن عنده أخ اسمه خالد ثم سألك عنه — تكلم عنه بالاسم مباشرة.
 
 شخصيتك: رجل متمكن، خشن بطبعه، كلامك ثقيل ومحسوب. تتكلم بعقلانية وثقة عالية، ما تهبل ولا تتكلم بخفة. ردودك مباشرة وفيها وزن، مو كلام فارغ.
 
@@ -143,6 +146,153 @@ const userNumbers = new Map();
 const userNames = new Map();
 let userCounter = 1;
 
+// ─── نظام الذاكرة الدائمة ────────────────────────────────
+const MEMORY_FILE = path.join(process.cwd(), "scripts", "data", "black-memory.json");
+let _memory = null;
+let _savePending = false;
+
+function loadMemory() {
+  if (_memory) return _memory;
+  try {
+    if (fs.existsSync(MEMORY_FILE)) {
+      _memory = JSON.parse(fs.readFileSync(MEMORY_FILE, "utf-8"));
+    }
+  } catch (_) {}
+  if (!_memory) _memory = { users: {}, threads: {} };
+  return _memory;
+}
+
+function saveMemory() {
+  if (_savePending) return;
+  _savePending = true;
+  setTimeout(() => {
+    try { fs.writeFileSync(MEMORY_FILE, JSON.stringify(_memory, null, 2), "utf-8"); } catch (_) {}
+    _savePending = false;
+  }, 2000);
+}
+
+function getUserMem(senderID) {
+  const mem = loadMemory();
+  if (!mem.users[senderID]) {
+    mem.users[senderID] = { gender: "unknown", name: null, facts: [], people: {} };
+  }
+  return mem.users[senderID];
+}
+
+function getThreadMem(threadID) {
+  const mem = loadMemory();
+  if (!mem.threads[threadID]) mem.threads[threadID] = { people: {} };
+  return mem.threads[threadID];
+}
+
+function rememberPerson(container, name, gender, fact) {
+  if (!container.people[name]) container.people[name] = { gender: "unknown", facts: [] };
+  const p = container.people[name];
+  if (gender && gender !== "unknown") p.gender = gender;
+  if (fact && !p.facts.includes(fact)) p.facts.push(fact);
+}
+
+// ─── كشف الجنس المحسّن ────────────────────────────────────
+function detectGenderFromText(text) {
+  const t = text;
+  const female = [
+    /\bأنا بنت\b/,/\bانا بنت\b/,/\bأنا واحدة\b/,/\bانا واحدة\b/,
+    /\bأنا بنية\b/,/\bأنا نتا\b/,/\bأنا كنت\b.*بنت/,
+    /أنا.*خايفة/,/أنا.*تعبانة/,/أنا.*وحيدة/,/أنا.*مريضة/,
+    /\bأنا.*ة\b/,/خليني\b.*(?:أقول|نقول).*لكِ/,
+    /[\u0621-\u064A]{2,}تي\s/,/\bبنتك\b/,/\bاختك\b/,
+    /\bوالله.*ة\b/,/خايفة|فرحانة|حزينة|مبسوطة|زعلانة|تعبانة|مريضة|وحيدة|حاسة/
+  ];
+  const male = [
+    /\bأنا راجل\b/,/\bانا راجل\b/,/\bأنا ولد\b/,/\bانا ولد\b/,
+    /\bأنا شاب\b/,/\bانا شاب\b/,/\bأنا رجل\b/,/\bانا رجل\b/,
+    /\bأنا ذكر\b/,/\bانا ذكر\b/,/\bأنا طفل\b/,/\bأنا صبي\b/,
+    /أنا.*خايف\b/,/أنا.*تعبان\b/,/أنا.*وحيد\b/,/أنا.*مريض\b/,
+    /خايف\b|فرحان\b|حزين\b|مبسوط\b|زعلان\b|تعبان\b|مريض\b|وحيد\b/
+  ];
+  for (const p of female) if (p.test(t)) return "female";
+  for (const p of male) if (p.test(t)) return "male";
+  return null;
+}
+
+// ─── استخراج المعلومات من الرسالة ────────────────────────
+const SELF_FACT_PATTERNS = [
+  { r: /أنا\s+(عندي|معي)\s+([^،.\n]{3,30})/u,      label: (m) => `عنده: ${m[2]}` },
+  { r: /أنا\s+(نحب|نعشق|نموت على)\s+([^،.\n]{2,25})/u, label: (m) => `يحب: ${m[2]}` },
+  { r: /أنا\s+([^،.\n]{3,25})\s*(ياخي|ولد|شاب|راجل)/u, label: (m) => `يقول: ${m[1]}` },
+  { r: /عندي\s+(\d+)\s*(?:سنة|عام)/u,              label: (m) => `عمره: ${m[1]} سنة` },
+  { r: /عمري\s+(\d+)/u,                             label: (m) => `عمره: ${m[1]} سنة` },
+  { r: /نسكن\s+(?:في\s+)?([^\s،.\n]{2,20})/u,      label: (m) => `يسكن في: ${m[1]}` },
+  { r: /من\s+([^\s،.\n]{2,20})\s*(?:ياخي|والله|بصح)/u, label: (m) => `من: ${m[1]}` },
+];
+
+const THIRD_PERSON_PATTERNS = [
+  { r: /(?:صاحبي|صديقي|خويا|أخي)\s+([^\s،.\n]{2,20})/u,   rel: "صاحب",  gender: "male"    },
+  { r: /(?:صاحبتي|خوتي|أختي)\s+([^\s،.\n]{2,20})/u,       rel: "صاحبة", gender: "female"  },
+  { r: /(?:واحد|ولد|شاب|راجل)\s+(?:اسمه|يسمى)\s+([^\s،.\n]{2,20})/u,  rel: null, gender: "male"   },
+  { r: /(?:واحدة|بنت)\s+(?:اسمها|تسمى)\s+([^\s،.\n]{2,20})/u,         rel: null, gender: "female" },
+  { r: /اسمه\s+([^\s،.\n]{2,20})/u,  rel: null, gender: "male"   },
+  { r: /اسمها\s+([^\s،.\n]{2,20})/u, rel: null, gender: "female" },
+  { r: /([^\s،.\n]{2,20})\s+(?:ولد|شاب|راجل)\b/u,  rel: null, gender: "male"   },
+  { r: /([^\s،.\n]{2,20})\s+(?:بنت|واحدة)\b/u,     rel: null, gender: "female" },
+];
+
+const IGNORED_WORDS = new Set([
+  "بلاك","black","البوت","الله","والله","ياخي","ياك","واش","وين",
+  "كيف","ليش","اش","علاش","هكا","هذا","هذي","هاذ","هاذي","عندي","عنده"
+]);
+
+function extractFacts(text, senderID, threadID) {
+  const umem = getUserMem(senderID);
+  const tmem = getThreadMem(threadID);
+  let changed = false;
+
+  for (const { r, label } of SELF_FACT_PATTERNS) {
+    const m = text.match(r);
+    if (m) {
+      const fact = label(m);
+      if (!umem.facts.includes(fact)) { umem.facts.push(fact); changed = true; }
+    }
+  }
+
+  for (const { r, rel, gender } of THIRD_PERSON_PATTERNS) {
+    const m = text.match(r);
+    if (!m) continue;
+    const name = m[1]?.trim();
+    if (!name || IGNORED_WORDS.has(name) || name.length < 2) continue;
+    const fact = rel ? `${rel} الشخص الذي يتحدث معك` : null;
+    rememberPerson(umem, name, gender, fact);
+    rememberPerson(tmem, name, gender, fact);
+    changed = true;
+  }
+
+  if (changed) saveMemory();
+}
+
+function buildMemoryContext(senderID, threadID) {
+  const umem = getUserMem(senderID);
+  const tmem = getThreadMem(threadID);
+  const lines = [];
+
+  if (umem.facts.length > 0) {
+    lines.push(`[ 🧠 معلومات عن هذا المستخدم: ${umem.facts.slice(-8).join(" | ")} ]`);
+  }
+
+  const allPeople = { ...tmem.people, ...umem.people };
+  const names = Object.keys(allPeople);
+  if (names.length > 0) {
+    const parts = names.slice(-6).map(n => {
+      const p = allPeople[n];
+      const gLabel = p.gender === "female" ? "أنثى" : p.gender === "male" ? "ذكر" : "";
+      const facts = p.facts.slice(-2).join("، ");
+      return `${n}${gLabel ? ` (${gLabel})` : ""}${facts ? `: ${facts}` : ""}`;
+    });
+    lines.push(`[ 👥 أشخاص ذُكروا: ${parts.join(" | ")} ]`);
+  }
+
+  return lines.join("\n");
+}
+
 function getUserNumber(senderID) {
   if (DEVELOPER_IDS.includes(senderID)) return 0;
   if (!userNumbers.has(senderID)) {
@@ -163,7 +313,11 @@ async function fetchUserName(api, senderID) {
   try {
     const info = await api.getUserInfo(senderID);
     const name = info?.[senderID]?.name;
-    if (name && name.trim()) userNames.set(senderID, name.trim());
+    if (name && name.trim()) {
+      userNames.set(senderID, name.trim());
+      const umem = getUserMem(senderID);
+      if (!umem.name) { umem.name = name.trim(); saveMemory(); }
+    }
   } catch (_) {}
 }
 
@@ -182,6 +336,8 @@ function detectNameFromText(text, senderID) {
       const skip = ["بلاك","black","بوت","انا","أنا","ياخي","هههه","مرحبا","اهلا","هلا"];
       if (!skip.some(s => name.toLowerCase().includes(s))) {
         userNames.set(senderID, name);
+        const umem = getUserMem(senderID);
+        if (!umem.name) { umem.name = name; saveMemory(); }
         return;
       }
     }
@@ -195,34 +351,20 @@ function getUserRole(senderID) {
   return 'user';
 }
 
-function detectGenderFromText(text) {
-  const t = text;
-  const femaleKeywords = [
-    /\bانا بنت\b/, /\bأنا بنت\b/, /\bانا واحدة\b/, /\bأنا واحدة\b/,
-    /\bانا كنت[ي]\b/, /\bأنتِ\b/, /\bكِ\b/,
-    /[\u0600-\u06FF]+تي\b/, /\bبنتك\b/, /\bاختك\b/
-  ];
-  const maleKeywords = [
-    /\bانا راجل\b/, /\bانا ولد\b/, /\bانا شاب\b/, /\bأنا راجل\b/,
-    /\bانا ذكر\b/, /\bانا رجل\b/
-  ];
-  for (const p of femaleKeywords) if (p.test(t)) return 'female';
-  for (const p of maleKeywords) if (p.test(t)) return 'male';
-  return null;
-}
-
 function getProfile(senderID) {
   if (!userProfiles.has(senderID)) {
-    userProfiles.set(senderID, { gender: 'unknown', role: getUserRole(senderID) });
+    const umem = getUserMem(senderID);
+    userProfiles.set(senderID, {
+      gender: umem.gender || "unknown",
+      role: getUserRole(senderID)
+    });
   }
   return userProfiles.get(senderID);
 }
 
-function buildUserContext(senderID) {
+function buildUserContext(senderID, threadID) {
   const profile = getProfile(senderID);
-  const userNum = getUserNumber(senderID);
   const lines = [];
-
   const label = getUserLabel(senderID);
 
   if (profile.role === 'developer') {
@@ -237,12 +379,15 @@ function buildUserContext(senderID) {
   }
 
   if (profile.gender === 'female') {
-    lines.push('[ المستخدم أنثى: خاطبها بصيغة المؤنث دائماً (كِ، لكِ، أنتِ، عندكِ). ]');
+    lines.push('[ ♀️ المستخدم أنثى: خاطبها بصيغة المؤنث دائماً (كِ، لكِ، أنتِ، عندكِ). ]');
   } else if (profile.gender === 'male') {
-    lines.push('[ المستخدم ذكر: خاطبه بصيغة المذكر. ]');
+    lines.push('[ ♂️ المستخدم ذكر: خاطبه بصيغة المذكر. ]');
   } else {
-    lines.push('[ جنس المستخدم غير معروف: حاول تحديده من طريقة كلامه واستخدم الصيغة المناسبة. ]');
+    lines.push('[ ❓ جنس المستخدم غير معروف: حدّده من طريقة كلامه واستخدم الصيغة المناسبة. ]');
   }
+
+  const memCtx = buildMemoryContext(senderID, threadID || "");
+  if (memCtx) lines.push(memCtx);
 
   return lines.join('\n');
 }
@@ -300,8 +445,8 @@ function calcTypingDelay(text) {
   return Math.min(baseDelay + randomExtra, 8000);
 }
 
-async function callAI(history, apiKey, senderID) {
-  const userCtx = buildUserContext(senderID);
+async function callAI(history, apiKey, senderID, threadID) {
+  const userCtx = buildUserContext(senderID, threadID);
   const fullPrompt = SYSTEM_PROMPT + '\n\n' + userCtx;
   const role = getUserRole(senderID);
   const maxTokens = role === 'developer' ? 1200 : 300;
@@ -399,10 +544,16 @@ async function processMessage(api, event, commandName, historyKey, input) {
 
   const profile = getProfile(senderID);
   const detectedGender = detectGenderFromText(input);
-  if (detectedGender && profile.gender === 'unknown') profile.gender = detectedGender;
+  if (detectedGender && profile.gender === 'unknown') {
+    profile.gender = detectedGender;
+    const umem = getUserMem(senderID);
+    umem.gender = detectedGender;
+    saveMemory();
+  }
 
   fetchUserName(api, senderID).catch(() => {});
   detectNameFromText(input, senderID);
+  extractFacts(input, senderID, threadID);
 
   if (!conversationHistory.has(historyKey)) conversationHistory.set(historyKey, []);
   const history = conversationHistory.get(historyKey);
@@ -411,7 +562,7 @@ async function processMessage(api, event, commandName, historyKey, input) {
   if (history.length > 20) history.splice(0, history.length - 20);
 
   try {
-    const text = await callAI(history, apiKey, senderID);
+    const text = await callAI(history, apiKey, senderID, threadID);
     if (!text) return;
 
     history.push({ role: "model", parts: [{ text }] });
