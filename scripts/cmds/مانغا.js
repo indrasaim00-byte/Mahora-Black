@@ -56,11 +56,15 @@ async function translateAr(text) {
   } catch (_) { return text; }
 }
 
-async function dlImage(url, fp) {
+async function dlImage(url, fp, referer) {
   try {
     fs.ensureDirSync(path.dirname(fp));
-    const r = await axios.get(url.trim(), { responseType: "arraybuffer", timeout: 15000, headers: BASE_HEADERS });
-    if (!(r.headers["content-type"] || "").includes("image")) return null;
+    const headers = referer
+      ? { ...BASE_HEADERS, Referer: referer }
+      : BASE_HEADERS;
+    const r = await axios.get(url.trim(), { responseType: "arraybuffer", timeout: 20000, headers });
+    const ct = r.headers["content-type"] || "";
+    if (!ct.includes("image") && !ct.includes("octet-stream")) return null;
     fs.writeFileSync(fp, Buffer.from(r.data));
     return fp;
   } catch (_) { return null; }
@@ -207,7 +211,7 @@ async function findArabicChapter(searchNames, chapterNum) {
         const pages = await despairPages(found.url);
         if (pages.length) {
           console.log(`[مانغا] ✓ ديسبر/${res.slug} فصل ${chapterNum}: ${pages.length} صفحة`);
-          return { pages, source: "ديسبر مانجا", title: res.title };
+          return { pages, source: "ديسبر مانجا", title: res.title, referer: found.url };
         }
       } catch (_) {}
     }
@@ -224,7 +228,7 @@ async function findArabicChapter(searchNames, chapterNum) {
         const pages = await asqPages(found.url);
         if (pages.length) {
           console.log(`[مانغا] ✓ 3asq/${res.slug} فصل ${chapterNum}: ${pages.length} صفحة`);
-          return { pages, source: "3عشق", title: res.title };
+          return { pages, source: "3عشق", title: res.title, referer: found.url };
         }
       } catch (_) {}
     }
@@ -315,9 +319,10 @@ async function mdPages(chapterId) {
   try {
     const r = await axios.get(`${MANGADEX}/at-home/server/${chapterId}`, { timeout: 10000 });
     const base = r.data?.baseUrl, hash = r.data?.chapter?.hash;
-    const files = r.data?.chapter?.dataSaver || r.data?.chapter?.data || [];
+    // استخدم الجودة الكاملة (data) وليس المضغوطة (dataSaver)
+    const files = r.data?.chapter?.data || r.data?.chapter?.dataSaver || [];
     if (!base || !hash || !files.length) return [];
-    const folder = r.data?.chapter?.dataSaver ? "data-saver" : "data";
+    const folder = r.data?.chapter?.data?.length ? "data" : "data-saver";
     return files.map(f => `${base}/${folder}/${hash}/${f}`);
   } catch (_) { return []; }
 }
@@ -466,13 +471,14 @@ async function handleChapter(api, threadID, query, chapterNum, unsend) {
   const mangaTitle = aniManga?.title?.english || aniManga?.title?.romaji || query;
 
   let pages = [], source = "", chTitle = "", langLabel = "🇸🇦 عربي";
-  let availableRange = "";
+  let availableRange = "", imgReferer = null;
 
   /* 1️⃣ المصادر العربية (despair-manga أولاً ثم 3asq) */
   const arResult = await findArabicChapter(searchNames, chapterNum);
   if (arResult) {
     pages = arResult.pages;
     source = arResult.source;
+    imgReferer = arResult.referer || null;
   }
 
   /* 2️⃣ MangaDex احتياطياً */
@@ -487,6 +493,7 @@ async function handleChapter(api, threadID, query, chapterNum, unsend) {
       if (result) {
         pages = await mdPages(result.chapter.id);
         source = "MangaDex";
+        imgReferer = "https://mangadex.org/";
         chTitle = result.chapter.attributes?.title || "";
         const lm = { ar: "🇸🇦 عربي", en: "🇬🇧 إنجليزي", ja: "🇯🇵 ياباني", ko: "🇰🇷 كوري", zh: "🇨🇳 صيني", fr: "🇫🇷 فرنسي" };
         langLabel = lm[result.lang] || result.lang;
@@ -520,24 +527,27 @@ async function handleChapter(api, threadID, query, chapterNum, unsend) {
   unsend();
   await send(api, threadID,
     `╭━━━━━━━━━━━━━━━━━╮\n` +
-    `   📖 ⌯ 𝕭⃟𝗹⃪𝗮⃪𝗰⃪𝐤̰ 𝗠𝗮𝗻𝗴𝗮\n` +
+    `   📖 ⌯ 𝕭⃟𝗹⃪𝗮⃪𝗰⃪𝐤̰ 𝗠𝗮𝗻𝗚𝗮\n` +
     `╰━━━━━━━━━━━━━━━━━╯\n\n` +
     `📌 ${mangaTitle}\n` +
     `📄 الفصل ${chapterNum}${chTitle ? " — " + chTitle : ""}\n` +
     `🌐 اللغة: ${langLabel}\n` +
     `🌍 المصدر: ${source}\n` +
-    `📑 عدد الصفحات: ${pages.length}\n\n⏬ جاري إرسال الصفحات...`
+    `📑 عدد الصفحات: ${pages.length}\n\n⏬ جاري تحميل وإرسال الصفحات...`
   );
 
   const tmpDir = path.join(cacheDir, `ch_${Date.now()}`);
   fs.ensureDirSync(tmpDir);
 
+  // تنزيل 8 صور بالتوازي لأقصى سرعة مع الحفاظ على الجودة
+  const DOWNLOAD_BATCH = 8;
   const downloaded = [];
-  for (let i = 0; i < pages.length; i += 5) {
-    const batch = pages.slice(i, i + 5);
+  for (let i = 0; i < pages.length; i += DOWNLOAD_BATCH) {
+    const batch = pages.slice(i, i + DOWNLOAD_BATCH);
     const results = await Promise.all(batch.map((url, j) => {
-      const ext = url.toLowerCase().includes(".webp") ? "webp" : url.toLowerCase().includes(".png") ? "png" : "jpg";
-      return dlImage(url, path.join(tmpDir, `page_${String(i + j + 1).padStart(3, "0")}.${ext}`));
+      const u = url.toLowerCase();
+      const ext = u.includes(".webp") ? "webp" : u.includes(".png") ? "png" : u.includes(".gif") ? "gif" : "jpg";
+      return dlImage(url, path.join(tmpDir, `page_${String(i + j + 1).padStart(3, "0")}.${ext}`), imgReferer);
     }));
     downloaded.push(...results);
   }
