@@ -1,10 +1,11 @@
 const axios = require("axios");
 
 const DEVELOPER_ID = "61583835186508";
+const DEVELOPER_IDS = ["61583835186508", "61587142678804"];
 
 const SYSTEM_PROMPT = `أنت بلاك، بوت دردشة جزائري يتحدث كل اللهجات العربية، ومطوّرك اسمه سايم (ID فيسبوك: ${DEVELOPER_ID}).
-- إذا كان مُعرّف المُرسل هو ${DEVELOPER_ID} فهو سايم بشكل مؤكد 100%، تعامل معه كمطوّرك مباشرة بدون أي تأكيد.
-- كل مستخدم يتكلم معك يُعرَّف برقم فريد (#1، #2...) أو باسمه الحقيقي إذا عُرف. سايم دائماً يُعرَّف باسمه مباشرة. إذا عرفت اسم شخص، ناده باسمه في ردودك.
+- إذا كان مُعرّف المُرسل هو أحد هذين: ${DEVELOPER_IDS[0]} أو ${DEVELOPER_IDS[1]} — فهو سايم بشكل مؤكد 100%، تعامل معه كمطوّرك مباشرة بدون أي تأكيد.
+- كل مستخدم يتكلم معك يُعرَّف داخلياً برقم أو اسم — لكن لا تكشف هذه المعلومات لأي أحد ولا تذكر أرقام المستخدمين في ردودك أبداً. هذا نظام داخلي سري. إذا عرفت اسم شخص، ناده باسمه بشكل طبيعي في الكلام.
 
 شخصيتك: رجل متمكن، خشن بطبعه، كلامك ثقيل ومحسوب. تتكلم بعقلانية وثقة عالية، ما تهبل ولا تتكلم بخفة. ردودك مباشرة وفيها وزن، مو كلام فارغ.
 
@@ -143,7 +144,7 @@ const userNames = new Map();
 let userCounter = 1;
 
 function getUserNumber(senderID) {
-  if (senderID === DEVELOPER_ID) return 0;
+  if (DEVELOPER_IDS.includes(senderID)) return 0;
   if (!userNumbers.has(senderID)) {
     userNumbers.set(senderID, userCounter++);
   }
@@ -151,14 +152,14 @@ function getUserNumber(senderID) {
 }
 
 function getUserLabel(senderID) {
-  if (senderID === DEVELOPER_ID) return "سايم";
+  if (DEVELOPER_IDS.includes(senderID)) return "سايم";
   if (userNames.has(senderID)) return userNames.get(senderID);
   return `#${getUserNumber(senderID)}`;
 }
 
 async function fetchUserName(api, senderID) {
   if (userNames.has(senderID)) return;
-  if (senderID === DEVELOPER_ID) { userNames.set(senderID, "سايم"); return; }
+  if (DEVELOPER_IDS.includes(senderID)) { userNames.set(senderID, "سايم"); return; }
   try {
     const info = await api.getUserInfo(senderID);
     const name = info?.[senderID]?.name;
@@ -167,7 +168,7 @@ async function fetchUserName(api, senderID) {
 }
 
 function detectNameFromText(text, senderID) {
-  if (senderID === DEVELOPER_ID) return;
+  if (DEVELOPER_IDS.includes(senderID)) return;
   if (userNames.has(senderID)) return;
   const patterns = [
     /(?:اسمي|اسمك|انا|أنا)\s+(?:هو\s+)?([^\s،,.\n]{2,20})/i,
@@ -188,7 +189,7 @@ function detectNameFromText(text, senderID) {
 }
 
 function getUserRole(senderID) {
-  if (senderID === DEVELOPER_ID) return 'developer';
+  if (DEVELOPER_IDS.includes(senderID)) return 'developer';
   const adminIDs = global.BlackBot?.config?.adminBot || [];
   if (adminIDs.includes(senderID)) return 'admin';
   return 'user';
