@@ -407,11 +407,12 @@ const TRIGGER_NAMES = ["بلاك", "black", "blk", "بلاگ", "بﻻك"];
 function getTriggeredInput(body) {
   if (!body) return null;
   const trimmed = body.trim();
+  const lower = trimmed.toLowerCase();
   for (const name of TRIGGER_NAMES) {
-    if (trimmed.toLowerCase().startsWith(name)) {
-      const rest = trimmed.slice(name.length).trim();
-      if (rest.length > 0) return rest;
-      return null;
+    const idx = lower.indexOf(name);
+    if (idx !== -1) {
+      const without = (trimmed.slice(0, idx) + trimmed.slice(idx + name.length)).trim();
+      return without.length > 0 ? without : trimmed;
     }
   }
   return null;
@@ -430,15 +431,7 @@ module.exports = {
     countDown: 5
   },
 
-  onStart: async function ({ api, event, commandName, args }) {
-    const input = args.join(" ").trim();
-    if (!input) {
-      return api.sendMessage("قولي شو تريد 🙂", event.threadID, event.messageID);
-    }
-    const { threadID, senderID } = event;
-    const historyKey = `${threadID}_${senderID}`;
-    await processMessage(api, event, commandName, historyKey, input);
-  },
+  onStart: async function () {},
 
   onChat: async function ({ api, event, commandName }) {
     const body = (event.body || "").trim();
