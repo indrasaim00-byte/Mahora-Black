@@ -42,7 +42,7 @@ module.exports = {
       const botID = api.getCurrentUserID();
 
       if (userID == botID) {
-        const botNick = "𓆩⚝𓆪𝕭𝖑𝖆𝖈𝖐𓆩⚝𓆪";
+        const botNick = global.BlackBot?.config?.nickNameBot || "𓆩⚝𓆪𝕭𝖑𝖆𝖈𝖐𓆩⚝𓆪";
         try { await api.changeNickname(botNick, threadID, botID); } catch (e) {}
 
         const botGifs = [
