@@ -7,45 +7,51 @@ const ANILIST = "https://graphql.anilist.co";
 const MANGADEX = "https://api.mangadex.org";
 const cacheDir = path.join(__dirname, "cache");
 
-// تنظيف ملفات الغلاف القديمة عند التشغيل
 try {
   fs.ensureDirSync(cacheDir);
-  const oldCovers = fs.readdirSync(cacheDir).filter(f => /^(manga_|cover_)\d/.test(f) && f.endsWith(".jpg"));
-  oldCovers.forEach(f => fs.removeSync(path.join(cacheDir, f)));
+  const old = fs.readdirSync(cacheDir).filter(f => /^cover_/.test(f));
+  old.forEach(f => { try { fs.removeSync(path.join(cacheDir, f)); } catch (_) {} });
 } catch (_) {}
 
-const ANILIST_QUERY = `
+/* ─── AniList queries ─── */
+const SEARCH_QUERY = `
 query ($search: String) {
-  Page(perPage: 1) {
+  Page(perPage: 6) {
     media(search: $search, type: MANGA, sort: SEARCH_MATCH) {
-      id title { romaji english native }
-      description(asHtml: false)
-      status chapters volumes averageScore genres siteUrl
-      countryOfOrigin startDate { year } coverImage { large }
+      id
+      title { romaji english native }
+      status chapters averageScore countryOfOrigin startDate { year }
+      coverImage { large }
+      genres
     }
   }
 }`;
 
-const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
-const BASE_HEADERS = {
-  "User-Agent": UA,
-  "Accept-Language": "ar,en-US;q=0.7,en;q=0.3",
-  "Referer": "https://google.com/"
-};
+const INFO_QUERY = `
+query ($id: Int) {
+  Media(id: $id, type: MANGA) {
+    id title { romaji english native }
+    description(asHtml: false)
+    status chapters volumes averageScore genres siteUrl
+    countryOfOrigin startDate { year } coverImage { large }
+  }
+}`;
+
+const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36";
+const BASE_HEADERS = { "User-Agent": UA, "Accept-Language": "ar,en-US;q=0.7,en;q=0.3", "Referer": "https://google.com/" };
 
 function countryLabel(c) {
-  return ({ JP: "🇯🇵 مانغا", KR: "🇰🇷 مانهوا", CN: "🇨🇳 مانهوا صينية" })[c] || "مانغا";
+  return ({ JP: "🇯🇵 مانغا", KR: "🇰🇷 مانهوا", CN: "🇨🇳 مانهوا صينية" })[c] || "📖 مانغا";
 }
 function statusLabel(s) {
-  return ({ FINISHED: "✅ مكتملة", RELEASING: "🟢 مستمرة", NOT_YET_RELEASED: "🔜 لم تصدر بعد", CANCELLED: "❌ ملغاة", HIATUS: "⏸️ متوقفة مؤقتاً" })[s] || s;
+  return ({ FINISHED: "✅ مكتملة", RELEASING: "🟢 مستمرة", NOT_YET_RELEASED: "🔜 لم تصدر", CANCELLED: "❌ ملغاة", HIATUS: "⏸️ متوقفة" })[s] || s;
 }
 function cleanDesc(t, n = 500) {
   return (t || "").replace(/<br\s*\/?>/gi, "\n").replace(/<[^>]+>/g, "").replace(/\n{3,}/g, "\n\n").trim().slice(0, n);
 }
 
 function getGeminiKey() {
-  try { return process.env.GEMINI_API_KEY || JSON.parse(fs.readFileSync(path.join(process.cwd(), "config.json"), "utf-8")).apiKeys?.gemini || null; }
-  catch (_) { return process.env.GEMINI_API_KEY || null; }
+  try { return process.env.GOOGLE_API_KEY || process.env.GEMINI_API_KEY || null; } catch (_) { return null; }
 }
 
 async function translateAr(text) {
@@ -61,31 +67,18 @@ async function translateAr(text) {
   } catch (_) { return text; }
 }
 
-async function dlImage(url, fp, referer) {
+async function dlImage(url, fp) {
   const cleanUrl = url.trim();
   fs.ensureDirSync(path.dirname(fp));
-
-  const attempts = [
-    referer ? referer : null,
-    "https://3asq.org/",
-    "https://despair-manga.net/",
-    "https://google.com/"
-  ].filter(Boolean);
-
-  for (const ref of attempts) {
+  const referers = ["https://anilist.co/", "https://google.com/", "https://cdn.anilist.co/"];
+  for (const ref of referers) {
     try {
-      const headers = {
-        ...BASE_HEADERS,
-        "Referer": ref,
-        "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
-        "Sec-Fetch-Dest": "image",
-        "Sec-Fetch-Mode": "no-cors",
-        "Sec-Fetch-Site": "cross-site"
-      };
-      const r = await axios.get(cleanUrl, { responseType: "arraybuffer", timeout: 25000, headers });
+      const r = await axios.get(cleanUrl, {
+        responseType: "arraybuffer", timeout: 20000,
+        headers: { ...BASE_HEADERS, Referer: ref, Accept: "image/*,*/*;q=0.8" }
+      });
       const ct = r.headers["content-type"] || "";
-      const size = r.data?.byteLength || 0;
-      if ((!ct.includes("image") && !ct.includes("octet-stream")) || size < 1000) continue;
+      if ((!ct.includes("image") && !ct.includes("octet-stream")) || (r.data?.byteLength || 0) < 1000) continue;
       fs.writeFileSync(fp, Buffer.from(r.data));
       return fp;
     } catch (_) {}
@@ -98,6 +91,71 @@ async function send(api, threadID, body, attachment) {
     try { api.sendMessage(attachment ? { body, attachment } : { body }, threadID, (err, info) => resolve(info?.messageID || null)); }
     catch (e) { resolve(null); }
   });
+}
+
+/* ─── AniList search (returns up to 6 results) ─── */
+async function aniSearchMulti(query) {
+  try {
+    const r = await axios.post(ANILIST, { query: SEARCH_QUERY, variables: { search: query } },
+      { headers: { "Content-Type": "application/json" }, timeout: 12000 });
+    return r.data?.data?.Page?.media || [];
+  } catch (_) { return []; }
+}
+
+async function aniGetById(id) {
+  try {
+    const r = await axios.post(ANILIST, { query: INFO_QUERY, variables: { id } },
+      { headers: { "Content-Type": "application/json" }, timeout: 12000 });
+    return r.data?.data?.Media || null;
+  } catch (_) { return null; }
+}
+
+/* ─── MangaDex ─── */
+async function mdSearch(title) {
+  try {
+    const r = await axios.get(`${MANGADEX}/manga`, { params: { title, limit: 10 }, timeout: 10000 });
+    const results = r.data?.data || [];
+    const tLow = title.toLowerCase();
+    return results.find(m => {
+      const all = [
+        ...Object.values(m.attributes.title || {}),
+        ...(m.attributes.altTitles || []).flatMap(o => Object.values(o))
+      ].map(s => s?.toLowerCase?.());
+      return all.some(at => at && (at === tLow || at.includes(tLow) || tLow.includes(at)));
+    }) || results[0] || null;
+  } catch (_) { return null; }
+}
+
+async function mdChapter(mdId, chNum, lang = "en") {
+  try {
+    const r = await axios.get(`${MANGADEX}/chapter`, {
+      params: { manga: mdId, chapter: String(chNum), "translatedLanguage[]": lang, limit: 10 },
+      timeout: 10000
+    });
+    return (r.data?.data || []).find(c => Math.abs(parseFloat(c.attributes?.chapter) - parseFloat(chNum)) < 0.01) || null;
+  } catch (_) { return null; }
+}
+
+async function mdPages(chapterId) {
+  try {
+    const r = await axios.get(`${MANGADEX}/at-home/server/${chapterId}`, { timeout: 10000 });
+    const base = r.data?.baseUrl, hash = r.data?.chapter?.hash;
+    const files = r.data?.chapter?.data || r.data?.chapter?.dataSaver || [];
+    if (!base || !hash || !files.length) return [];
+    const folder = r.data?.chapter?.data?.length ? "data" : "data-saver";
+    return files.map(f => `${base}/${folder}/${hash}/${f}`);
+  } catch (_) { return []; }
+}
+
+async function mdChapterList(mdId, lang = "en") {
+  try {
+    const r = await axios.get(`${MANGADEX}/manga/${mdId}/aggregate`, { params: { "translatedLanguage[]": lang }, timeout: 10000 });
+    const nums = [];
+    for (const vol of Object.values(r.data?.volumes || {}))
+      for (const ch of Object.values(vol.chapters || {}))
+        if (ch.chapter && ch.chapter !== "none") nums.push(parseFloat(ch.chapter));
+    return nums.sort((a, b) => a - b);
+  } catch (_) { return []; }
 }
 
 /* ─── despair-manga.net ─── */
@@ -177,12 +235,7 @@ async function asqChapters(slug) {
 
 async function asqPages(chapterUrl) {
   try {
-    const r = await axios.get(chapterUrl, {
-      timeout: 12000,
-      headers: { ...BASE_HEADERS, Referer: "https://3asq.org/" }
-    });
-
-    // try ts_reader.run first (same as despair)
+    const r = await axios.get(chapterUrl, { timeout: 12000, headers: { ...BASE_HEADERS, Referer: "https://3asq.org/" } });
     const tsMatch = r.data.match(/ts_reader\.run\((\{[\s\S]*?\})\)/);
     if (tsMatch) {
       try {
@@ -191,91 +244,19 @@ async function asqPages(chapterUrl) {
         if (imgs.length) return imgs.map(i => i.startsWith("http") ? i : "https://3asq.org" + i);
       } catch (_) {}
     }
-
     const $ = cheerio.load(r.data);
     const pages = [];
-
     $(".reading-content img, .wp-manga-chapter-img, .page-break img, .chapter-content img, img[data-src], img[data-lazy-src]").each((_, el) => {
-      const src = (
-        $(el).attr("data-src") ||
-        $(el).attr("data-lazy-src") ||
-        $(el).attr("data-original") ||
-        $(el).attr("data-url") ||
-        $(el).attr("src") || ""
-      ).trim();
-      if (src && src.startsWith("http") && !src.includes("placeholder") && !src.includes("logo") && !src.includes("data:")) {
-        pages.push(src);
-      }
+      const src = ($(el).attr("data-src") || $(el).attr("data-lazy-src") || $(el).attr("data-original") || $(el).attr("src") || "").trim();
+      if (src && src.startsWith("http") && !src.includes("placeholder") && !src.includes("logo") && !src.includes("data:")) pages.push(src);
     });
-
     return [...new Set(pages)];
-  } catch (_) { return []; }
-}
-
-/* ─── AniList ─── */
-async function aniSearch(query) {
-  try {
-    const r = await axios.post(ANILIST, { query: ANILIST_QUERY, variables: { search: query } },
-      { headers: { "Content-Type": "application/json" }, timeout: 12000 });
-    return r.data?.data?.Page?.media?.[0] || null;
-  } catch (_) { return null; }
-}
-
-/* ─── MangaDex ─── */
-async function mdSearch(title) {
-  try {
-    const r = await axios.get(`${MANGADEX}/manga`, { params: { title, limit: 10 }, timeout: 10000 });
-    const results = r.data?.data || [];
-    const tLow = title.toLowerCase();
-    return results.find(m => {
-      const all = [
-        ...Object.values(m.attributes.title || {}),
-        ...(m.attributes.altTitles || []).flatMap(o => Object.values(o))
-      ].map(s => s?.toLowerCase?.());
-      return all.some(at => at && (at === tLow || at.includes(tLow) || tLow.includes(at)));
-    }) || results[0] || null;
-  } catch (_) { return null; }
-}
-
-async function mdChapter(mdId, chNum, lang = "en") {
-  try {
-    const r = await axios.get(`${MANGADEX}/chapter`, {
-      params: { manga: mdId, chapter: String(chNum), "translatedLanguage[]": lang, limit: 10 },
-      timeout: 10000
-    });
-    const found = (r.data?.data || []).find(c => Math.abs(parseFloat(c.attributes?.chapter) - parseFloat(chNum)) < 0.01);
-    if (found) return found;
-  } catch (_) {}
-  return null;
-}
-
-async function mdPages(chapterId) {
-  try {
-    const r = await axios.get(`${MANGADEX}/at-home/server/${chapterId}`, { timeout: 10000 });
-    const base = r.data?.baseUrl, hash = r.data?.chapter?.hash;
-    const files = r.data?.chapter?.data || r.data?.chapter?.dataSaver || [];
-    if (!base || !hash || !files.length) return [];
-    const folder = r.data?.chapter?.data?.length ? "data" : "data-saver";
-    return files.map(f => `${base}/${folder}/${hash}/${f}`);
-  } catch (_) { return []; }
-}
-
-async function mdChapterList(mdId, lang = "en") {
-  try {
-    const r = await axios.get(`${MANGADEX}/manga/${mdId}/aggregate`,
-      { params: { "translatedLanguage[]": lang }, timeout: 10000 });
-    const nums = [];
-    for (const vol of Object.values(r.data?.volumes || {}))
-      for (const ch of Object.values(vol.chapters || {}))
-        if (ch.chapter && ch.chapter !== "none") nums.push(parseFloat(ch.chapter));
-    return nums.sort((a, b) => a - b);
   } catch (_) { return []; }
 }
 
 /* ─── Arabic chapter fetcher ─── */
 async function fetchArabicChapter(searchNames, chapterNum) {
   const target = parseFloat(chapterNum);
-
   for (const name of searchNames) {
     const results = await despairSearch(name);
     for (const res of results.slice(0, 3)) {
@@ -288,7 +269,6 @@ async function fetchArabicChapter(searchNames, chapterNum) {
       } catch (_) {}
     }
   }
-
   for (const name of searchNames) {
     const results = await asqSearch(name);
     for (const res of results.slice(0, 4)) {
@@ -301,8 +281,6 @@ async function fetchArabicChapter(searchNames, chapterNum) {
       } catch (_) {}
     }
   }
-
-  // MangaDex Arabic fallback
   for (const name of searchNames) {
     const mdManga = await mdSearch(name).catch(() => null);
     if (!mdManga) continue;
@@ -312,11 +290,9 @@ async function fetchArabicChapter(searchNames, chapterNum) {
       if (pages.length) return { pages, source: "MangaDex 🇸🇦", referer: "https://mangadex.org/" };
     }
   }
-
   return null;
 }
 
-/* ─── English chapter fetcher ─── */
 async function fetchEnglishChapter(searchNames, chapterNum) {
   for (const name of searchNames) {
     const mdManga = await mdSearch(name).catch(() => null);
@@ -330,7 +306,6 @@ async function fetchEnglishChapter(searchNames, chapterNum) {
   return null;
 }
 
-/* ─── getArabicInfo (for info view) ─── */
 async function getArabicInfo(searchNames) {
   for (const name of searchNames) {
     const results = await despairSearch(name);
@@ -365,14 +340,14 @@ async function sendChapterPages(api, threadID, pages, imgReferer, mangaTitle, ch
     `📑 عدد الصفحات: ${pages.length}\n\n⏬ جاري تحميل وإرسال الصفحات...`
   );
 
-  const DOWNLOAD_BATCH = 8;
+  const BATCH = 8;
   const downloaded = [];
-  for (let i = 0; i < pages.length; i += DOWNLOAD_BATCH) {
-    const batch = pages.slice(i, i + DOWNLOAD_BATCH);
+  for (let i = 0; i < pages.length; i += BATCH) {
+    const batch = pages.slice(i, i + BATCH);
     const results = await Promise.all(batch.map((url, j) => {
       const u = url.toLowerCase();
       const ext = u.includes(".webp") ? "webp" : u.includes(".png") ? "png" : u.includes(".gif") ? "gif" : "jpg";
-      return dlImage(url, path.join(tmpDir, `page_${String(i + j + 1).padStart(3, "0")}.${ext}`), imgReferer);
+      return dlImage(url, path.join(tmpDir, `page_${String(i + j + 1).padStart(3, "0")}.${ext}`));
     }));
     downloaded.push(...results);
   }
@@ -387,146 +362,17 @@ async function sendChapterPages(api, threadID, pages, imgReferer, mangaTitle, ch
     const isLast = i === valid.length - 1;
     await new Promise(resolve => {
       api.sendMessage({
-        body: isLast
-          ? `📄 ${i + 1} / ${valid.length}\n✎﹏﹏﹏﹏﹏﹏﹏﹏\n↞ ⌯ 𝗕⃪𝗹⃪𝖆⃟𝗰⃪𝗸⃪ ˖՞𝗦⃪𝖆⃟𝗶⃪𝗻⃪𝘁⃪ ⪼`
-          : `📄 ${i + 1} / ${valid.length}`,
+        body: isLast ? `📄 ${i + 1} / ${valid.length}\n✎﹏﹏﹏﹏﹏﹏﹏﹏\n↞ ⌯ 𝗕⃪𝗹⃪𝖆⃟𝗰⃪𝗸⃪ ˖՞𝗦⃪𝖆⃟𝗶⃪𝗻⃪𝘁⃪ ⪼` : `📄 ${i + 1} / ${valid.length}`,
         attachment: fs.createReadStream(valid[i])
       }, threadID, () => resolve());
     });
     await new Promise(r => setTimeout(r, 800));
   }
-
   fs.remove(tmpDir).catch(() => {});
 }
 
-/* ─── module ─── */
-module.exports = {
-  config: {
-    name: "مانغا",
-    aliases: ["manga", "مانهوا", "مانجا", "manhua", "manhwa"],
-    version: "10.0",
-    author: "Saint",
-    countDown: 5,
-    role: 0,
-    shortDescription: "ابحث عن مانغا أو اقرأ فصولها",
-    longDescription: "معلومات من AniList + فصول عربية وإنجليزية من مصادر متعددة",
-    category: "anime",
-    guide: "{pn} [اسم المانغا]\n{pn} [اسم المانغا] فصل [رقم]"
-  },
-
-  onStart: async function ({ api, event, args }) {
-    const { threadID, senderID, messageID } = event;
-    const input = args.join(" ").trim();
-
-    if (!input) return api.sendMessage(
-      "🔍 اكتب اسم المانغا بعد الأمر.\n" +
-      "مثال: .مانغا lookism\n" +
-      "لقراءة فصل: .مانغا lookism فصل 1",
-      threadID
-    );
-
-    const chMatch =
-      input.match(/^(.+?)\s+(?:ال)?فصل\s+(\d+(?:\.\d+)?)$/i) ||
-      input.match(/^(.+?)\s+ch(?:apter)?\s*(\d+(?:\.\d+)?)$/i);
-
-    const isChapter = !!chMatch;
-    const query = chMatch ? chMatch[1].trim() : input;
-    const chapterNum = chMatch ? chMatch[2] : null;
-
-    if (isChapter) {
-      const waitID = await send(api, threadID, "◈ ↞جاري البحث..〔 ! 〕\n◈ 𝗕⃪𝗹𝗮𝗰⃪𝗸 : 𝗠⃪𝗮⃪𝗵⃪𝗼𝗿𝗮⃪\n━━━━━━━━━━━━━");
-
-      const aniManga = await aniSearch(query).catch(() => null);
-      const searchNames = [...new Set([
-        aniManga?.title?.english, aniManga?.title?.romaji, query
-      ].filter(Boolean))];
-      const mangaTitle = aniManga?.title?.english || aniManga?.title?.romaji || query;
-
-      if (waitID) api.unsendMessage(waitID, () => {});
-
-      api.sendMessage(
-        `╭━━━━━━━━━━━━━━━━━╮\n` +
-        `   📖 ⌯ 𝕭⃟𝗹⃪𝗮⃪𝗰⃪𝐤̰ 𝗠𝗮𝗻𝗚𝗮\n` +
-        `╰━━━━━━━━━━━━━━━━━╯\n\n` +
-        `📌 ${mangaTitle}\n` +
-        `📄 الفصل ${chapterNum}\n\n` +
-        `🌐 هل تريدها بالعربية أم الإنجليزية؟\n\n` +
-        `↩️ ردّ بـ: ar أو en`,
-        threadID,
-        (err, info) => {
-          if (!info?.messageID) return;
-          global.BlackBot.onReply.set(info.messageID, {
-            commandName: this.config.name,
-            author: senderID,
-            query,
-            chapterNum,
-            searchNames,
-            mangaTitle
-          });
-        }
-      );
-      return;
-    }
-
-    const waitID = await send(api, threadID, "◈ ↞جاري البحث..〔 ! 〕\n◈ 𝗕⃪𝗹𝗮𝗰⃪𝗸 : 𝗠⃪𝗮⃪𝗵⃪𝗼𝗿𝗮⃪\n━━━━━━━━━━━━━");
-    try {
-      await handleInfo(api, threadID, query, () => { if (waitID) api.unsendMessage(waitID, () => {}); });
-    } catch (_) {
-      if (waitID) api.unsendMessage(waitID, () => {});
-      await send(api, threadID, "❌ حدث خطأ أثناء البحث، جرب مرة أخرى.");
-    }
-  },
-
-  onReply: async function ({ api, event, Reply }) {
-    if (event.senderID !== Reply.author) return;
-
-    const choice = event.body.trim().toLowerCase().replace(/\s/g, "");
-    const { threadID } = event;
-    const { query, chapterNum, searchNames, mangaTitle } = Reply;
-
-    if (!["ar", "en"].includes(choice)) {
-      return api.sendMessage("❌ ردّ بـ ar للعربية أو en للإنجليزية.", threadID);
-    }
-
-    const loadID = await send(api, threadID,
-      `⏳ جاري تحميل الفصل ${chapterNum} باللغة ${choice === "ar" ? "🇸🇦 العربية" : "🇬🇧 الإنجليزية"}...`
-    );
-
-    let result = null;
-
-    if (choice === "ar") {
-      result = await fetchArabicChapter(searchNames, chapterNum);
-      if (loadID) api.unsendMessage(loadID, () => {});
-      if (!result) {
-        return send(api, threadID,
-          `❌ الفصل ${chapterNum} غير متاح بالعربية لـ "${mangaTitle}".\n` +
-          `💡 جرب: .مانغا ${query} فصل ${chapterNum}\nثم اختر en`
-        );
-      }
-      await sendChapterPages(api, threadID, result.pages, result.referer, mangaTitle, chapterNum, result.source, "🇸🇦 عربي");
-
-    } else {
-      result = await fetchEnglishChapter(searchNames, chapterNum);
-      if (loadID) api.unsendMessage(loadID, () => {});
-      if (!result) {
-        return send(api, threadID,
-          `❌ الفصل ${chapterNum} غير متاح بالإنجليزية لـ "${mangaTitle}".\n` +
-          `💡 جرب: .مانغا ${query} فصل ${chapterNum}\nثم اختر ar`
-        );
-      }
-      await sendChapterPages(api, threadID, result.pages, result.referer, mangaTitle, chapterNum, result.source, "🇬🇧 إنجليزي", result.chTitle || "");
-    }
-  }
-};
-
-/* ─── info ─── */
-async function handleInfo(api, threadID, query, unsend) {
-  const m = await aniSearch(query);
-  if (!m) {
-    unsend();
-    return send(api, threadID, `❌ لم أجد نتائج لـ "${query}"\nجرب كتابة الاسم بالإنجليزي.`);
-  }
-
+/* ─── Show full manga info ─── */
+async function showMangaInfo(api, threadID, m, query) {
   const title = m.title.english || m.title.romaji || query;
   const searchNames = [...new Set([title, m.title.romaji, m.title.english, query].filter(Boolean))];
 
@@ -544,10 +390,7 @@ async function handleInfo(api, threadID, query, unsend) {
     if (nums.length > 40) chaptersText += ` ...`;
     chaptersText += `\n\n💡 لقراءة فصل:\n.مانغا ${query} فصل [رقم]`;
   } else if (mdManga) {
-    const [arNums, enNums] = await Promise.all([
-      mdChapterList(mdManga.id, "ar"),
-      mdChapterList(mdManga.id, "en")
-    ]);
+    const [arNums, enNums] = await Promise.all([mdChapterList(mdManga.id, "ar"), mdChapterList(mdManga.id, "en")]);
     const bestNums = arNums.length ? arNums : enNums;
     const flag = arNums.length ? "🇸🇦 عربي" : "🇬🇧 إنجليزي";
     if (bestNums.length) {
@@ -563,11 +406,9 @@ async function handleInfo(api, threadID, query, unsend) {
     chaptersText = "\n\n⚠️ لا توجد فصول متاحة.";
   }
 
+  const descAr = await translateAr(cleanDesc(m.description));
   const coverTmp = path.join(cacheDir, `cover_${m.id}_${Date.now()}.jpg`);
-  const [descAr, coverPath] = await Promise.all([
-    translateAr(cleanDesc(m.description)),
-    m.coverImage?.large ? dlImage(m.coverImage.large, coverTmp) : null
-  ]);
+  const coverPath = m.coverImage?.large ? await dlImage(m.coverImage.large, coverTmp) : null;
 
   const body =
     `╭━━━━━━━━━━━━━━━━━╮\n` +
@@ -587,7 +428,179 @@ async function handleInfo(api, threadID, query, unsend) {
     `\n\n✎﹏﹏﹏﹏﹏﹏﹏﹏﹏﹏﹏﹏﹏\n` +
     `↞ ⌯ 𝗕⃪𝗹⃪𝖆⃟𝗰⃪𝗸⃪ ˖՞𝗦⃪𝖆⃟𝗶⃪𝗻⃪𝘁⃪ ⪼`;
 
-  unsend();
   await send(api, threadID, body);
   if (coverPath) api.sendMessage({ body: "", attachment: [fs.createReadStream(coverPath)] }, threadID, () => fs.remove(coverPath).catch(() => {}));
 }
+
+/* ─── Module ─── */
+module.exports = {
+  config: {
+    name: "مانغا",
+    aliases: ["manga", "مانهوا", "مانجا", "manhua", "manhwa"],
+    version: "11.0",
+    author: "سايم",
+    countDown: 5,
+    role: 0,
+    shortDescription: "ابحث عن مانغا أو اقرأ فصولها",
+    category: "anime",
+    guide: "{pn} [اسم المانغا]\n{pn} [اسم المانغا] فصل [رقم]"
+  },
+
+  onStart: async function ({ api, event, args }) {
+    const { threadID, senderID, messageID } = event;
+    const input = args.join(" ").trim();
+
+    if (!input) return api.sendMessage(
+      "🔍 اكتب اسم المانغا بعد الأمر.\nمثال: .مانغا lookism\nلقراءة فصل: .مانغا lookism فصل 1",
+      threadID
+    );
+
+    const chMatch =
+      input.match(/^(.+?)\s+(?:ال)?فصل\s+(\d+(?:\.\d+)?)$/i) ||
+      input.match(/^(.+?)\s+ch(?:apter)?\s*(\d+(?:\.\d+)?)$/i);
+
+    const isChapter = !!chMatch;
+    const query = chMatch ? chMatch[1].trim() : input;
+    const chapterNum = chMatch ? chMatch[2] : null;
+
+    const waitID = await send(api, threadID,
+      `◈ ↞جاري البحث..〔 ! 〕\n◈ 𝗕⃪𝗹𝗮𝗰⃪𝗸 : 𝗠⃪𝗮⃪𝗵⃪𝗼𝗿𝗮⃪\n━━━━━━━━━━━━━`
+    );
+
+    const results = await aniSearchMulti(query);
+    if (waitID) api.unsendMessage(waitID, () => {});
+
+    if (!results.length) {
+      return send(api, threadID, `❌ لم أجد نتائج لـ "${query}"\nجرب كتابة الاسم بالإنجليزي.`);
+    }
+
+    /* إذا كانت النتيجة الأولى تطابق تاماً → اعرضها مباشرة */
+    const qLow = query.toLowerCase().trim();
+    const exactMatch = results.find(m => {
+      const titles = [m.title.english, m.title.romaji, m.title.native].filter(Boolean).map(t => t.toLowerCase().trim());
+      return titles.some(t => t === qLow);
+    });
+
+    if (exactMatch) {
+      if (isChapter) {
+        const mangaTitle = exactMatch.title.english || exactMatch.title.romaji || query;
+        const searchNames = [...new Set([exactMatch.title.english, exactMatch.title.romaji, query].filter(Boolean))];
+        return api.sendMessage(
+          `╭━━━━━━━━━━━━━━━━━╮\n` +
+          `   📖 ⌯ 𝕭⃟𝗹⃪𝗮⃪𝗰⃪𝐤̰ 𝗠𝗮𝗻𝗚𝗮\n` +
+          `╰━━━━━━━━━━━━━━━━━╯\n\n` +
+          `📌 ${mangaTitle}\n📄 الفصل ${chapterNum}\n\n` +
+          `🌐 هل تريدها بالعربية أم الإنجليزية؟\n↩️ ردّ بـ: ar أو en`,
+          threadID,
+          (err, info) => {
+            if (!info?.messageID) return;
+            global.BlackBot.onReply.set(info.messageID, {
+              commandName: this.config.name,
+              type: "lang",
+              author: senderID,
+              query, chapterNum, searchNames, mangaTitle
+            });
+          }
+        );
+      }
+      const fullM = await aniGetById(exactMatch.id);
+      return showMangaInfo(api, threadID, fullM || exactMatch, query);
+    }
+
+    /* عرض قائمة اختيار */
+    const lines = results.map((m, i) => {
+      const title = m.title.english || m.title.romaji || "؟";
+      const native = m.title.native ? ` (${m.title.native})` : "";
+      const year = m.startDate?.year ? ` | ${m.startDate.year}` : "";
+      const score = m.averageScore ? ` | ⭐${m.averageScore}` : "";
+      const type = countryLabel(m.countryOfOrigin);
+      return `${i + 1}. ${type} ${title}${native}${year}${score}`;
+    });
+
+    api.sendMessage(
+      `╭━━━━━━━━━━━━━━━━━╮\n` +
+      `   📖 ⌯ 𝕭⃟𝗹⃪𝗮⃪𝗰⃪𝐤̰ 𝗠𝗮𝗻𝗚𝗮\n` +
+      `╰━━━━━━━━━━━━━━━━━╯\n\n` +
+      `🔍 نتائج البحث عن: "${query}"\n\n` +
+      lines.join("\n") +
+      `\n\n↩️ ردّ برقم للاختيار (1-${results.length})`,
+      threadID,
+      (err, info) => {
+        if (!info?.messageID) return;
+        global.BlackBot.onReply.set(info.messageID, {
+          commandName: this.config.name,
+          type: "pick",
+          author: senderID,
+          query,
+          isChapter,
+          chapterNum,
+          results
+        });
+      }
+    );
+  },
+
+  onReply: async function ({ api, event, Reply }) {
+    if (event.senderID !== Reply.author) return;
+    const { threadID } = event;
+    const body = event.body.trim().toLowerCase().replace(/\s/g, "");
+
+    /* ─── اختيار مانغا من القائمة ─── */
+    if (Reply.type === "pick") {
+      const { query, isChapter, chapterNum, results } = Reply;
+      const num = parseInt(body);
+      if (isNaN(num) || num < 1 || num > results.length) {
+        return api.sendMessage(`❌ اكتب رقم من 1 إلى ${results.length}`, threadID);
+      }
+      const chosen = results[num - 1];
+      const mangaTitle = chosen.title.english || chosen.title.romaji || query;
+      const searchNames = [...new Set([chosen.title.english, chosen.title.romaji, query].filter(Boolean))];
+
+      if (isChapter) {
+        return api.sendMessage(
+          `📌 ${mangaTitle}\n📄 الفصل ${chapterNum}\n\n🌐 هل تريدها بالعربية أم الإنجليزية؟\n↩️ ردّ بـ: ar أو en`,
+          threadID,
+          (err, info) => {
+            if (!info?.messageID) return;
+            global.BlackBot.onReply.set(info.messageID, {
+              commandName: this.config.name,
+              type: "lang",
+              author: Reply.author,
+              query, chapterNum, searchNames, mangaTitle
+            });
+          }
+        );
+      }
+
+      const waitID = await send(api, threadID, "⏳ جاري تحميل المعلومات...");
+      const fullM = await aniGetById(chosen.id);
+      if (waitID) api.unsendMessage(waitID, () => {});
+      return showMangaInfo(api, threadID, fullM || chosen, query);
+    }
+
+    /* ─── اختيار لغة الفصل ─── */
+    if (Reply.type === "lang") {
+      const { query, chapterNum, searchNames, mangaTitle } = Reply;
+      if (!["ar", "en"].includes(body)) {
+        return api.sendMessage("❌ ردّ بـ ar للعربية أو en للإنجليزية.", threadID);
+      }
+
+      const loadID = await send(api, threadID,
+        `⏳ جاري تحميل الفصل ${chapterNum} باللغة ${body === "ar" ? "🇸🇦 العربية" : "🇬🇧 الإنجليزية"}...`
+      );
+
+      let result = null;
+      if (body === "ar") {
+        result = await fetchArabicChapter(searchNames, chapterNum);
+        if (loadID) api.unsendMessage(loadID, () => {});
+        if (!result) return send(api, threadID, `❌ الفصل ${chapterNum} غير متاح بالعربية لـ "${mangaTitle}".\n💡 جرب: en`);
+        await sendChapterPages(api, threadID, result.pages, result.referer, mangaTitle, chapterNum, result.source, "🇸🇦 عربي");
+      } else {
+        result = await fetchEnglishChapter(searchNames, chapterNum);
+        if (loadID) api.unsendMessage(loadID, () => {});
+        if (!result) return send(api, threadID, `❌ الفصل ${chapterNum} غير متاح بالإنجليزية لـ "${mangaTitle}".\n💡 جرب: ar`);
+        await sendChapterPages(api, threadID, result.pages, result.referer, mangaTitle, chapterNum, result.source, "🇬🇧 إنجليزي", result.chTitle || "");
+      }
+    }
+  }
+};
