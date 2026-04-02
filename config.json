@@ -154,11 +154,11 @@
   },
   "logEvents": {
     "disableAll": false,
-    "message": true,
-    "message_reaction": true,
+    "message": false,
+    "message_reaction": false,
     "message_unsend": true,
-    "message_reply": true,
-    "event": true,
+    "message_reply": false,
+    "event": false,
     "read_receipt": false,
     "typ": false,
     "presence": false

@@ -1,6 +1,25 @@
 const createFuncMessage = global.utils.message;
 const handlerCheckDB = require("./handlerCheckData.js");
 
+// Rate limiter: track message count per thread per second window
+const _threadMsgCount = new Map();
+const _FLOOD_THRESHOLD = 8;
+
+function isThreadFlooding(threadID) {
+  const now = Math.floor(Date.now() / 1000);
+  const key = `${threadID}:${now}`;
+  const count = (_threadMsgCount.get(key) || 0) + 1;
+  _threadMsgCount.set(key, count);
+  // Clean old entries every 1000 calls
+  if (_threadMsgCount.size > 200) {
+    for (const [k] of _threadMsgCount) {
+      if (!k.endsWith(`:${now}`) && !k.endsWith(`:${now - 1}`))
+        _threadMsgCount.delete(k);
+    }
+  }
+  return count > _FLOOD_THRESHOLD;
+}
+
 module.exports = (
   api,
   threadModel,
@@ -39,6 +58,26 @@ module.exports = (
     )
       return;
 
+    // ⚡ Fast flood detection for message events
+    const isMessage = event.type === "message" || event.type === "message_reply";
+    let flooding = false;
+    if (isMessage && event.threadID) {
+      flooding = isThreadFlooding(event.threadID);
+    }
+
+    // ⚡ If flooding: only process commands and onReply — skip expensive DB check for non-commands
+    if (flooding && isMessage) {
+      const prefix = global.utils.getPrefix(event.threadID);
+      const body = event.body || "";
+      const isCommand = body.startsWith(prefix);
+      const isAiTrigger = body.startsWith("بلاك");
+      const hasOnReply = event.messageReply && global.BlackBot.onReply.has(event.messageReply.messageID);
+
+      if (!isCommand && !isAiTrigger && !hasOnReply) {
+        return;
+      }
+    }
+
     const message = createFuncMessage(api, event);
     await handlerCheckDB(usersData, threadsData, event);
 
@@ -66,7 +105,15 @@ module.exports = (
       case "message_reply":
       case "message_unsend":
         onFirstChat();
-        onChat();
+        // Skip onChat for flood groups on non-command messages
+        if (!flooding) {
+          onChat();
+        } else {
+          const prefix = global.utils.getPrefix(event.threadID);
+          const body = event.body || "";
+          if (body.startsWith(prefix) || body.startsWith("بلاك"))
+            onChat();
+        }
         onStart();
         onReply();
         break;
