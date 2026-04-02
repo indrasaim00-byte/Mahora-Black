@@ -2,7 +2,7 @@ module.exports = {
   config: {
     name: "حذف",
     aliases: ["clearname", "removename"],
-    version: "1.0",
+    version: "1.1",
     author: "Saint",
     countDown: 5,
     role: 0,
@@ -17,20 +17,29 @@ module.exports = {
     const adminBot = global.BlackBot.config.adminBot || [];
 
     const threadInfo = await api.getThreadInfo(threadID);
-    const participants = threadInfo.participantIDs;
+    const targets = threadInfo.participantIDs.filter(uid => uid !== botID && !adminBot.includes(uid));
 
-    const delay = ms => new Promise(r => setTimeout(r, ms));
+    if (!targets.length) return message.reply("◈ لا يوجد أعضاء لحذف كنياتهم");
 
-    let success = 0;
-    for (const uid of participants) {
-      if (uid === botID || adminBot.includes(uid)) continue;
-      try {
-        await api.changeNickname("", threadID, uid);
-        success++;
-        await delay(3000 + Math.floor(Math.random() * 4000));
-      } catch (e) {}
+    const BATCH = 5;
+    const DELAY_BETWEEN = 600;
+    const DELAY_IN_BATCH = 150;
+    let done = 0;
+
+    for (let i = 0; i < targets.length; i += BATCH) {
+      const batch = targets.slice(i, i + BATCH);
+      const promises = batch.map(async (uid, idx) => {
+        if (idx > 0) await new Promise(r => setTimeout(r, DELAY_IN_BATCH * idx));
+        try {
+          await api.changeNickname("", threadID, uid);
+          done++;
+        } catch (e) {}
+      });
+      await Promise.all(promises);
+      if (i + BATCH < targets.length) await new Promise(r => setTimeout(r, DELAY_BETWEEN));
     }
 
     await threadsData.set(threadID, {}, "data.da3Lock");
+    message.reply(`◈ تم حذف ${done}/${targets.length} كنية بنجاح`);
   }
 };
