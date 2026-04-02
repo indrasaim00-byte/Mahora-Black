@@ -2,22 +2,24 @@ const fs = require("fs-extra");
 const path = require("path");
 
 const GIF_PATH = path.join(__dirname, "../events/assets/ta3zib.gif");
+const ROUNDS = 10;
+const DELAY = 1500;
 
 module.exports = {
   config: {
     name: "تعذيب",
     aliases: ["ازعاج", "torture"],
-    version: "2.0",
+    version: "3.0",
     author: "سايم",
-    countDown: 8,
+    countDown: 60,
     role: 1,
-    shortDescription: "تشريد شخص 🦵",
+    shortDescription: "تعذيب شخص بالطرد والإعادة 🦵",
     category: "fun",
     guide: "رد على رسالة شخص أو: {pn} @شخص",
   },
 
-  onStart: async function ({ api, event, args }) {
-    const { threadID, messageID, mentions, messageReply, senderID } = event;
+  onStart: async function ({ api, event }) {
+    const { threadID, messageID, mentions, messageReply } = event;
 
     const adminBot = global.BlackBot?.config?.adminBot || [];
 
@@ -33,7 +35,7 @@ module.exports = {
       targetName = messageReply.senderName || `@${targetID}`;
     } else {
       return api.sendMessage(
-        "⚠️ رد على رسالة شخص أو منشنه!\nمثال: .تعذيب @شخص",
+        "⚠️ رد على رسالة شخص أو منشنه!",
         threadID,
         messageID
       );
@@ -42,6 +44,18 @@ module.exports = {
     if (adminBot.includes(targetID)) {
       return api.sendMessage(
         "هه متروحش تقود هذا يعذبنا نا ونت 😂",
+        threadID,
+        messageID
+      );
+    }
+
+    const botID = api.getCurrentUserID();
+    const threadInfo = await api.getThreadInfo(threadID).catch(() => null);
+    const botIsAdmin = threadInfo?.adminIDs?.some(a => a.uid === botID);
+
+    if (!botIsAdmin) {
+      return api.sendMessage(
+        "⚠️ خلّ البوت ادمن أول عشان يقدر يعذّب!",
         threadID,
         messageID
       );
@@ -58,7 +72,23 @@ module.exports = {
         threadID
       );
     } catch (err) {
-      api.sendMessage(`روح تشريد 🦵 ${targetName || ""}`, threadID);
+      await api.sendMessage(`روح تشريد 🦵 ${targetName || ""}`, threadID);
+    }
+
+    await new Promise(r => setTimeout(r, 1000));
+
+    for (let i = 1; i <= ROUNDS; i++) {
+      try {
+        await api.removeUserFromGroup(targetID, threadID);
+      } catch (e) {}
+
+      await new Promise(r => setTimeout(r, DELAY));
+
+      try {
+        await api.addUserToGroup(targetID, threadID);
+      } catch (e) {}
+
+      await new Promise(r => setTimeout(r, DELAY));
     }
   },
 };
