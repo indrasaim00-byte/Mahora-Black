@@ -5,11 +5,20 @@ if (!fs.existsSync(path)) {
   fs.writeFileSync(path, JSON.stringify({ status: true }, null, 2));
 }
 
+let _cache = null;
+function getCache() {
+  if (_cache === null) {
+    try { _cache = JSON.parse(fs.readFileSync(path)); }
+    catch { _cache = { status: true }; }
+  }
+  return _cache;
+}
+
 module.exports = {
   config: {
     name: "مشاهدة-تلقائية",
     aliases: ["autoseen"],
-    version: "2.0",
+    version: "2.1",
     author: "Saint",
     countDown: 0,
     role: 0,
@@ -22,7 +31,7 @@ module.exports = {
   },
 
   onStart: async function ({ message, args }) {
-    const data = JSON.parse(fs.readFileSync(path));
+    const data = getCache();
     if (!args[0]) {
       return message.reply(`◈ حالة المشاهدة التلقائية: ${data.status ? "〔✓〕 مفعّلة" : "〔✗〕 معطّلة"}`);
     }
@@ -42,12 +51,9 @@ module.exports = {
 
   onChat: async function ({ event, api }) {
     try {
-      const data = JSON.parse(fs.readFileSync(path));
-      if (data.status === true) {
+      if (getCache().status === true) {
         api.markAsReadAll();
       }
-    } catch (e) {
-      console.error(e);
-    }
+    } catch (e) {}
   },
 };
