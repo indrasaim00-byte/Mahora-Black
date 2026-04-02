@@ -5,17 +5,19 @@ const DEVELOPER_IDS = ["61583835186508", "61587142678804"];
 module.exports = {
   config: {
     name: "autoinvite",
-    version: "3.0",
+    version: "3.1",
     author: "Saint",
     category: "events"
   },
 
-  onStart: async ({ api, event, usersData, message }) => {
+  onStart: async ({ api, event, usersData, threadsData, message }) => {
     if (event.logMessageType !== "log:unsubscribe") return;
 
     const { threadID, logMessageData, author } = event;
 
-    // الحصول على ID الشخص — يدعم حقلَي المغادرة والإزالة
+    const settings = await threadsData.get(threadID, "data.autoinvite").catch(() => null);
+    if (settings?.disable === true) return;
+
     const leftID = String(
       logMessageData.leftParticipantFbId ||
       logMessageData.removedParticipantFbId ||
@@ -24,11 +26,9 @@ module.exports = {
 
     if (!leftID) return;
 
-    // لا تُعد البوت نفسه أو المطوّرين
     if (leftID === String(api.getCurrentUserID())) return;
     if (DEVELOPER_IDS.includes(leftID)) return;
 
-    // إذا أُزيل بواسطة شخص آخر (طرد) → لا تفعل شيئاً
     const wasRemoved = String(author) !== leftID;
     if (wasRemoved) return;
 

@@ -102,6 +102,7 @@ module.exports = (
       case "message_reply":
       case "message_unsend":
         onStart();
+        onChat();
         onReply();
         break;
 
