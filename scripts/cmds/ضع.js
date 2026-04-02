@@ -30,9 +30,9 @@ module.exports = {
     if (!targets.length) return message.reply("◈ لا يوجد أعضاء لتغيير كنياتهم");
 
     const nicknames = {};
-    const BATCH = 5;
-    const DELAY_BETWEEN = 600;
-    const DELAY_IN_BATCH = 150;
+    const BATCH = 1;
+    const DELAY_BETWEEN = 4000;
+    const DELAY_IN_BATCH = 0;
     let done = 0;
 
     for (let i = 0; i < targets.length; i += BATCH) {
