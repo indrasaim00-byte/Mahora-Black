@@ -18,7 +18,7 @@ module.exports = {
     guide: "رد على رسالة شخص أو: {pn} @شخص",
   },
 
-  onStart: async function ({ api, event }) {
+  onStart: async function ({ api, event, threadsData }) {
     const { threadID, messageID, mentions, messageReply } = event;
 
     const adminBot = global.BlackBot?.config?.adminBot || [];
@@ -44,18 +44,6 @@ module.exports = {
     if (adminBot.includes(targetID)) {
       return api.sendMessage(
         "هه متروحش تقود هذا يعذبنا نا ونت 😂",
-        threadID,
-        messageID
-      );
-    }
-
-    const botID = api.getCurrentUserID();
-    const threadInfo = await api.getThreadInfo(threadID).catch(() => null);
-    const botIsAdmin = threadInfo?.adminIDs?.some(a => a.uid === botID);
-
-    if (!botIsAdmin) {
-      return api.sendMessage(
-        "⚠️ خلّ البوت ادمن أول عشان يقدر يعذّب!",
         threadID,
         messageID
       );
