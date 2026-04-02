@@ -378,10 +378,19 @@ async function fetchArabicChapter(searchNames, chapterNum, mdId) {
       } catch (_) {}
     }
   }
-  // MangaDex Arabic — use mdId directly if available, else search
-  const mdMangaId = mdId || await mdSearch(searchNames[0]).then(m => m?.id).catch(() => null);
-  if (mdMangaId) {
-    const ch = await mdChapter(mdMangaId, chapterNum, "ar");
+  // MangaDex Arabic — use mdId directly if available, else loop all names
+  if (mdId) {
+    const ch = await mdChapter(mdId, chapterNum, "ar");
+    if (ch) {
+      const pages = await mdPages(ch.id);
+      if (pages.length) return { pages, source: "MangaDex 🇸🇦", referer: "https://mangadex.org/" };
+    }
+    return null;
+  }
+  for (const name of searchNames) {
+    const mdManga = await mdSearch(name).catch(() => null);
+    if (!mdManga) continue;
+    const ch = await mdChapter(mdManga.id, chapterNum, "ar");
     if (ch) {
       const pages = await mdPages(ch.id);
       if (pages.length) return { pages, source: "MangaDex 🇸🇦", referer: "https://mangadex.org/" };
