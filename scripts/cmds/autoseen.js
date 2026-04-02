@@ -6,6 +6,9 @@ if (!fs.existsSync(path)) {
 }
 
 let _cache = null;
+let _lastMarkRead = 0;
+const MARK_READ_INTERVAL = 10000;
+
 function getCache() {
   if (_cache === null) {
     try { _cache = JSON.parse(fs.readFileSync(path)); }
@@ -51,9 +54,11 @@ module.exports = {
 
   onChat: async function ({ event, api }) {
     try {
-      if (getCache().status === true) {
-        api.markAsReadAll();
-      }
+      if (!getCache().status) return;
+      const now = Date.now();
+      if (now - _lastMarkRead < MARK_READ_INTERVAL) return;
+      _lastMarkRead = now;
+      api.markAsReadAll().catch(() => {});
     } catch (e) {}
   },
 };

@@ -1,9 +1,18 @@
-const _nicknameDebounce = new Map();
+const _debounceMap = new Map();
+
+function shouldDebounce(key, ms) {
+        const now = Date.now();
+        const last = _debounceMap.get(key);
+        if (last && now - last < ms) return true;
+        _debounceMap.set(key, now);
+        if (_debounceMap.size > 1000) _debounceMap.clear();
+        return false;
+}
 
 module.exports = {
         config: {
                 name: "autoUpdateThreadInfo",
-                version: "1.4",
+                version: "1.5",
                 author: "Saint",
                 category: "events"
         },
@@ -14,13 +23,18 @@ module.exports = {
                         return;
 
                 if (event.logMessageType === "log:user-nickname") {
-                        const key = `${event.threadID}:${event.logMessageData?.participant_id}`;
-                        const now = Date.now();
-                        if (_nicknameDebounce.has(key) && now - _nicknameDebounce.get(key) < 15000)
-                                return;
-                        _nicknameDebounce.set(key, now);
-                        if (_nicknameDebounce.size > 500)
-                                _nicknameDebounce.clear();
+                        const uid = event.logMessageData?.participant_id;
+                        if (shouldDebounce(`nick:${event.threadID}:${uid}`, 15000)) return;
+                }
+
+                if (event.logMessageType === "log:subscribe") {
+                        const uid = event.logMessageData?.addedParticipants?.[0]?.userFbId || "batch";
+                        if (shouldDebounce(`sub:${event.threadID}:${uid}`, 10000)) return;
+                }
+
+                if (event.logMessageType === "log:unsubscribe") {
+                        const uid = event.logMessageData?.leftParticipantFbId || "unk";
+                        if (shouldDebounce(`unsub:${event.threadID}:${uid}`, 10000)) return;
                 }
                 const { threadID, logMessageData, logMessageType } = event;
                 const threadInfo = await threadsData.get(event.threadID);

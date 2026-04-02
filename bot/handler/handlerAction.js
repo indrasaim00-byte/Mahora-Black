@@ -67,7 +67,7 @@ module.exports = (
 
     // ⚡ If flooding: only process commands and onReply — skip expensive DB check for non-commands
     if (flooding && isMessage) {
-      const prefix = global.utils.getPrefix(event.threadID);
+      const prefix = (global.utils.getPrefix && global.utils.getPrefix(event.threadID)) || global.BlackBot?.config?.prefix || ".";
       const body = event.body || "";
       const isCommand = body.startsWith(prefix);
       const isAiTrigger = body.startsWith("بلاك");
@@ -109,7 +109,7 @@ module.exports = (
         if (!flooding) {
           onChat();
         } else {
-          const prefix = global.utils.getPrefix(event.threadID);
+          const prefix = (global.utils.getPrefix && global.utils.getPrefix(event.threadID)) || global.BlackBot?.config?.prefix || ".";
           const body = event.body || "";
           if (body.startsWith(prefix) || body.startsWith("بلاك"))
             onChat();
