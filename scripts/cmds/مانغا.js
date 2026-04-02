@@ -6,7 +6,6 @@ const path = require("path");
 const ANILIST = "https://graphql.anilist.co";
 const MANGADEX = "https://api.mangadex.org";
 const cacheDir = path.join(__dirname, "cache");
-const MAX_PER_MSG = 10;
 
 const ANILIST_QUERY = `
 query ($search: String) {
@@ -333,19 +332,17 @@ async function sendChapterPages(api, threadID, pages, imgReferer, mangaTitle, ch
     return send(api, threadID, "❌ فشل تحميل الصفحات، جرب مرة أخرى.");
   }
 
-  for (let i = 0; i < valid.length; i += MAX_PER_MSG) {
-    const chunk = valid.slice(i, i + MAX_PER_MSG);
-    const range = `${i + 1}-${Math.min(i + MAX_PER_MSG, valid.length)}`;
-    const isLast = i + MAX_PER_MSG >= valid.length;
+  for (let i = 0; i < valid.length; i++) {
+    const isLast = i === valid.length - 1;
     await new Promise(resolve => {
       api.sendMessage({
         body: isLast
-          ? `📄 ${range} من ${valid.length}\n✎﹏﹏﹏﹏﹏﹏﹏﹏\n↞ ⌯ 𝗕⃪𝗹⃪𝖆⃟𝗰⃪𝗸⃪ ˖՞𝗦⃪𝖆⃟𝗶⃪𝗻⃪𝘁⃪ ⪼`
-          : `📄 الصفحات ${range} من ${valid.length}`,
-        attachment: chunk.map(p => fs.createReadStream(p))
+          ? `📄 ${i + 1} / ${valid.length}\n✎﹏﹏﹏﹏﹏﹏﹏﹏\n↞ ⌯ 𝗕⃪𝗹⃪𝖆⃟𝗰⃪𝗸⃪ ˖՞𝗦⃪𝖆⃟𝗶⃪𝗻⃪𝘁⃪ ⪼`
+          : `📄 ${i + 1} / ${valid.length}`,
+        attachment: fs.createReadStream(valid[i])
       }, threadID, () => resolve());
     });
-    if (!isLast) await new Promise(r => setTimeout(r, 1500));
+    await new Promise(r => setTimeout(r, 800));
   }
 
   fs.remove(tmpDir).catch(() => {});
