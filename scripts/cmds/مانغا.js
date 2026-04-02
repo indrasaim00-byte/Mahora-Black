@@ -110,6 +110,76 @@ async function aniGetById(id) {
   } catch (_) { return null; }
 }
 
+/* ─── MangaDex search for pick list ─── */
+async function mdSearchMulti(query) {
+  try {
+    const r = await axios.get(`${MANGADEX}/manga`, {
+      params: { title: query, limit: 10, "includes[]": ["cover_art"], "order[relevance]": "desc" },
+      timeout: 10000
+    });
+    return (r.data?.data || []).map(m => {
+      const titles = m.attributes.title || {};
+      const altTitles = (m.attributes.altTitles || []).flatMap(o => Object.values(o));
+      const english = titles.en || altTitles.find(t => t) || Object.values(titles)[0] || "؟";
+      const romaji = titles.ja_ro || titles["ja-ro"] || null;
+      const native = titles.ja || titles.ko || titles.zh || null;
+      const origin = m.attributes.originalLanguage || "jp";
+      const countryMap = { jp: "JP", ko: "KR", zh: "CN", "zh-hk": "CN" };
+      return {
+        id: null,
+        mdId: m.id,
+        title: { english, romaji, native },
+        status: (m.attributes.status || "").toUpperCase(),
+        chapters: m.attributes.lastChapter || null,
+        averageScore: null,
+        countryOfOrigin: countryMap[origin] || "JP",
+        startDate: { year: m.attributes.year || null },
+        coverImage: { large: null },
+        genres: (m.attributes.tags || []).map(t => t.attributes?.name?.en).filter(Boolean).slice(0, 4),
+        source: "MangaDex"
+      };
+    });
+  } catch (_) { return []; }
+}
+
+/* ─── Combined search: AniList + MangaDex, scored by relevance ─── */
+async function combinedSearch(query) {
+  const qLow = query.toLowerCase().trim();
+
+  function scoreResult(m) {
+    const titles = [m.title.english, m.title.romaji, m.title.native]
+      .filter(Boolean).map(t => t.toLowerCase().trim());
+    if (titles.some(t => t === qLow)) return 100;
+    if (titles.some(t => t.startsWith(qLow) || qLow.startsWith(t))) return 80;
+    if (titles.some(t => t.includes(qLow))) return 60;
+    return 0;
+  }
+
+  const [aniResults, mdResults] = await Promise.all([
+    aniSearchMulti(query),
+    mdSearchMulti(query)
+  ]);
+
+  // score all results
+  const scored = [
+    ...aniResults.map(m => ({ ...m, _score: scoreResult(m), _src: "anilist" })),
+    ...mdResults.map(m => ({ ...m, _score: scoreResult(m), _src: "mangadex" }))
+  ];
+
+  // deduplicate: if AniList and MangaDex both have same title, prefer AniList
+  const seen = new Set();
+  const deduped = [];
+  for (const m of scored.sort((a, b) => b._score - a._score || (b.averageScore || 0) - (a.averageScore || 0))) {
+    const key = (m.title.english || m.title.romaji || "").toLowerCase().trim();
+    if (key && seen.has(key)) continue;
+    if (key) seen.add(key);
+    deduped.push(m);
+    if (deduped.length >= 8) break;
+  }
+
+  return deduped;
+}
+
 /* ─── MangaDex ─── */
 async function mdSearch(title) {
   try {
@@ -376,9 +446,13 @@ async function showMangaInfo(api, threadID, m, query) {
   const title = m.title.english || m.title.romaji || query;
   const searchNames = [...new Set([title, m.title.romaji, m.title.english, query].filter(Boolean))];
 
+  const mdSearchPromise = m.mdId
+    ? Promise.resolve({ id: m.mdId })
+    : mdSearch(title || query).catch(() => null);
+
   const [arInfo, mdManga] = await Promise.all([
     getArabicInfo(searchNames),
-    mdSearch(title || query).catch(() => null)
+    mdSearchPromise
   ]);
 
   let chaptersText = "";
@@ -467,7 +541,7 @@ module.exports = {
       `◈ ↞جاري البحث..〔 ! 〕\n◈ 𝗕⃪𝗹𝗮𝗰⃪𝗸 : 𝗠⃪𝗮⃪𝗵⃪𝗼𝗿𝗮⃪\n━━━━━━━━━━━━━`
     );
 
-    const results = await aniSearchMulti(query);
+    const results = await combinedSearch(query);
     if (waitID) api.unsendMessage(waitID, () => {});
 
     if (!results.length) {
@@ -503,18 +577,20 @@ module.exports = {
           }
         );
       }
-      const fullM = await aniGetById(exactMatch.id);
+      const fullM = exactMatch.id ? await aniGetById(exactMatch.id) : null;
       return showMangaInfo(api, threadID, fullM || exactMatch, query);
     }
 
-    /* عرض قائمة اختيار */
-    const lines = results.map((m, i) => {
+    /* عرض قائمة اختيار — حد 8 نتائج */
+    const limited = results.slice(0, 8);
+    const lines = limited.map((m, i) => {
       const title = m.title.english || m.title.romaji || "؟";
       const native = m.title.native ? ` (${m.title.native})` : "";
       const year = m.startDate?.year ? ` | ${m.startDate.year}` : "";
       const score = m.averageScore ? ` | ⭐${m.averageScore}` : "";
+      const srcTag = m._src === "mangadex" ? " [MD]" : "";
       const type = countryLabel(m.countryOfOrigin);
-      return `${i + 1}. ${type} ${title}${native}${year}${score}`;
+      return `${i + 1}. ${type} ${title}${native}${year}${score}${srcTag}`;
     });
 
     api.sendMessage(
@@ -523,7 +599,7 @@ module.exports = {
       `╰━━━━━━━━━━━━━━━━━╯\n\n` +
       `🔍 نتائج البحث عن: "${query}"\n\n` +
       lines.join("\n") +
-      `\n\n↩️ ردّ برقم للاختيار (1-${results.length})`,
+      `\n\n↩️ ردّ برقم للاختيار (1-${limited.length})`,
       threadID,
       (err, info) => {
         if (!info?.messageID) return;
@@ -534,7 +610,7 @@ module.exports = {
           query,
           isChapter,
           chapterNum,
-          results
+          results: limited
         });
       }
     );
@@ -577,7 +653,7 @@ module.exports = {
       }
 
       const waitID = await send(api, threadID, "⏳ جاري تحميل المعلومات...");
-      const fullM = await aniGetById(chosen.id);
+      const fullM = chosen.id ? await aniGetById(chosen.id) : null;
       if (waitID) api.unsendMessage(waitID, () => {});
       return showMangaInfo(api, threadID, fullM || chosen, query);
     }
