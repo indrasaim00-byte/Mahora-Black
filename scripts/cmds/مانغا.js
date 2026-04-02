@@ -7,6 +7,13 @@ const ANILIST = "https://graphql.anilist.co";
 const MANGADEX = "https://api.mangadex.org";
 const cacheDir = path.join(__dirname, "cache");
 
+// تنظيف ملفات الغلاف القديمة عند التشغيل
+try {
+  fs.ensureDirSync(cacheDir);
+  const oldCovers = fs.readdirSync(cacheDir).filter(f => /^(manga_|cover_)\d/.test(f) && f.endsWith(".jpg"));
+  oldCovers.forEach(f => fs.removeSync(path.join(cacheDir, f)));
+} catch (_) {}
+
 const ANILIST_QUERY = `
 query ($search: String) {
   Page(perPage: 1) {
@@ -556,9 +563,10 @@ async function handleInfo(api, threadID, query, unsend) {
     chaptersText = "\n\n⚠️ لا توجد فصول متاحة.";
   }
 
+  const coverTmp = path.join(cacheDir, `cover_${m.id}_${Date.now()}.jpg`);
   const [descAr, coverPath] = await Promise.all([
     translateAr(cleanDesc(m.description)),
-    m.coverImage?.large ? dlImage(m.coverImage.large, path.join(cacheDir, `manga_${m.id}.jpg`)) : null
+    m.coverImage?.large ? dlImage(m.coverImage.large, coverTmp) : null
   ]);
 
   const body =
