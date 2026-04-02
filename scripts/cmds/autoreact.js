@@ -13,6 +13,7 @@ module.exports = {
   onStart: async function () {},
 
   onChat: async function ({ api, event }) {
+    return;
     try {
       const { messageID, body, senderID, threadID } = event;
       if (!messageID || !body) return;
