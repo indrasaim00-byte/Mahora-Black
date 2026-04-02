@@ -90,6 +90,18 @@ module.exports = {
       }
     }
 
+    // ADMIN PROMOTION PROTECTION
+    if (logMessageType === "log:thread-admins" && logMessageData.ADMIN_EVENT === "add_admin") {
+      // Only block if the one who promoted is NOT a bot admin (developer)
+      if (!isBotAdmin) {
+        const targetID = logMessageData.TARGET_ID;
+        try { await api.changeAdminStatus(threadID, author, false); } catch (_) {}
+        try { await api.changeAdminStatus(threadID, targetID, false); } catch (_) {}
+        api.sendMessage("مشي قاللكم سايم ممنوع تضيفو ادمن زيادة يولاد 9", threadID);
+        return;
+      }
+    }
+
     // ADMIN changed → update saved data
     if (isAdmin) {
       if (logMessageType === "log:thread-name") {
