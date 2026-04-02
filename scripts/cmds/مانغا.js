@@ -324,6 +324,174 @@ async function asqPages(chapterUrl) {
   } catch (_) { return []; }
 }
 
+/* ─── Generic WP-Manga scraper (mangalek, teamx, mangaswat, etc.) ─── */
+function wpMangaScraper(baseUrl) {
+  return {
+    async search(query) {
+      try {
+        const r = await axios.get(`${baseUrl}/?s=${encodeURIComponent(query)}&post_type=wp-manga`, { timeout: 10000, headers: BASE_HEADERS });
+        const $ = cheerio.load(r.data);
+        const results = [];
+        $(`a[href*='${baseUrl.replace(/https?:\/\//, "")}/manga/']`).each((_, el) => {
+          const href = $(el).attr("href") || "";
+          const m = href.match(/\/manga\/([^/?#]+)/);
+          if (m && !results.find(x => x.slug === m[1]))
+            results.push({ slug: m[1], title: $(el).text().trim() || m[1] });
+        });
+        return results;
+      } catch (_) { return []; }
+    },
+    async chapters(slug) {
+      try {
+        const r = await axios.get(`${baseUrl}/manga/${slug}/`, { timeout: 10000, headers: BASE_HEADERS });
+        const $ = cheerio.load(r.data);
+        const chapters = [];
+        $(".eplister ul li").each((_, el) => {
+          const num = $(el).attr("data-num");
+          const link = $(el).find("a").attr("href");
+          if (num && link) chapters.push({ num: parseFloat(num), url: link });
+        });
+        if (!chapters.length) {
+          $(".wp-manga-chapter a, .chapter-item a, li.free-chap a").each((_, el) => {
+            const href = $(el).attr("href") || "";
+            const numMatch = ($(el).text() || href).match(/(\d+(?:\.\d+)?)/);
+            if (href && numMatch) chapters.push({ num: parseFloat(numMatch[1]), url: href.startsWith("http") ? href : baseUrl + href });
+          });
+        }
+        return chapters.sort((a, b) => a.num - b.num);
+      } catch (_) { return []; }
+    },
+    async pages(url) {
+      try {
+        const r = await axios.get(url, { timeout: 12000, headers: { ...BASE_HEADERS, Referer: baseUrl + "/" } });
+        const m = r.data.match(/ts_reader\.run\((\{[\s\S]*?\})\)/);
+        if (m) {
+          try {
+            const data = JSON.parse(m[1]);
+            const imgs = data.sources?.[0]?.images || [];
+            if (imgs.length) return imgs.map(i => i.startsWith("http") ? i : baseUrl + i);
+          } catch (_) {}
+        }
+        const $ = cheerio.load(r.data);
+        const pages = [];
+        $(".reading-content img, .wp-manga-chapter-img, .page-break img, img[data-src], img[data-lazy-src]").each((_, el) => {
+          const src = ($(el).attr("data-src") || $(el).attr("data-lazy-src") || $(el).attr("src") || "").trim();
+          if (src && src.startsWith("http") && !src.includes("placeholder") && !src.includes("logo") && !src.includes("data:")) pages.push(src);
+        });
+        return [...new Set(pages)];
+      } catch (_) { return []; }
+    }
+  };
+}
+
+const ARABIC_SITES = [
+  { name: "ديسبر مانجا", scraper: wpMangaScraper("https://despair-manga.net") },
+  { name: "3عشق",        scraper: { search: asqSearch, chapters: asqChapters, pages: asqPages } },
+  { name: "مانجا ليك",   scraper: wpMangaScraper("https://www.mangalek.com") },
+  { name: "تيم إكس",     scraper: wpMangaScraper("https://www.teamx.eu") },
+  { name: "مانجا سوات",  scraper: wpMangaScraper("https://www.mangaswat.com") },
+  { name: "مانجا سيتي",  scraper: wpMangaScraper("https://mangacity.me") },
+];
+
+/* ─── comick.io (English/multilingual) ─── */
+async function comickSearch(query) {
+  try {
+    const r = await axios.get("https://api.comick.fun/v1.0/search", {
+      params: { q: query, type: "comic", limit: 6 },
+      timeout: 10000, headers: { "User-Agent": UA }
+    });
+    return (r.data || []).slice(0, 6);
+  } catch (_) { return []; }
+}
+
+async function comickChapters(slug, lang = "en") {
+  try {
+    const r = await axios.get(`https://api.comick.fun/comic/${slug}/chapters`, {
+      params: { lang, page: 1, limit: 300 },
+      timeout: 12000, headers: { "User-Agent": UA }
+    });
+    return (r.data?.chapters || []).map(c => ({
+      num: parseFloat(c.chap || 0),
+      hid: c.hid,
+      title: c.title || ""
+    })).filter(c => !isNaN(c.num)).sort((a, b) => a.num - b.num);
+  } catch (_) { return []; }
+}
+
+async function comickPages(hid) {
+  try {
+    const r = await axios.get(`https://api.comick.fun/chapter/${hid}/`, {
+      timeout: 12000, headers: { "User-Agent": UA }
+    });
+    const imgs = r.data?.chapter?.images || r.data?.images || [];
+    return imgs.map(i => i.url || i.b2key ? `https://meo.comick.pictures/${i.b2key}` : "").filter(Boolean);
+  } catch (_) { return []; }
+}
+
+async function fetchComickChapter(searchNames, chapterNum, lang = "en") {
+  const target = parseFloat(chapterNum);
+  for (const name of searchNames) {
+    const results = await comickSearch(name);
+    const best = results.find(r => {
+      const t = (r.title || r.slug || "").toLowerCase();
+      return searchNames.some(n => titleSimilarity(n, t) >= 0.5);
+    }) || results[0];
+    if (!best) continue;
+    const slug = best.slug || best.hid;
+    if (!slug) continue;
+    try {
+      const chapters = await comickChapters(slug, lang);
+      const found = chapters.find(c => Math.abs(c.num - target) < 0.01);
+      if (!found?.hid) continue;
+      const pages = await comickPages(found.hid);
+      if (pages.length) return { pages, source: `Comick.io ${lang === "en" ? "🇬🇧" : "🇸🇦"}`, referer: `https://comick.io/comic/${slug}`, chTitle: found.title };
+    } catch (_) {}
+  }
+  return null;
+}
+
+/* ─── nhentai.net (Hentai) ─── */
+async function nhentaiSearch(query) {
+  try {
+    const r = await axios.get(`https://nhentai.net/api/galleries/search`, {
+      params: { query, page: 1 },
+      timeout: 12000,
+      headers: { ...BASE_HEADERS, "Accept": "application/json", Referer: "https://nhentai.net/" }
+    });
+    return (r.data?.result || []).slice(0, 5);
+  } catch (_) { return []; }
+}
+
+function nhentaiExtToMime(ext) {
+  return ({ 1: "jpg", 2: "png", 3: "gif", j: "jpg", p: "png", g: "gif" })[ext] || "jpg";
+}
+
+async function nhentaiPages(galleryId, mediaId, images) {
+  try {
+    return images.map((img, i) => {
+      const ext = nhentaiExtToMime(img.t);
+      return `https://i.nhentai.net/galleries/${mediaId}/${i + 1}.${ext}`;
+    });
+  } catch (_) { return []; }
+}
+
+async function fetchNhentaiChapter(searchNames, chapterNum) {
+  const target = parseFloat(chapterNum);
+  for (const name of searchNames) {
+    const results = await nhentaiSearch(name);
+    if (!results.length) continue;
+    const idx = Math.max(0, Math.min(results.length - 1, target - 1));
+    const gallery = results[idx];
+    if (!gallery) continue;
+    const mediaId = gallery.media_id;
+    const images = gallery.images?.pages || [];
+    if (!images.length) continue;
+    const pages = await nhentaiPages(gallery.id, mediaId, images);
+    if (pages.length) return { pages, source: "Nhentai 🔞", referer: `https://nhentai.net/g/${gallery.id}/` };
+  }
+  return null;
+}
+
 /* ─── Title similarity scorer ─── */
 function titleSimilarity(q, t) {
   if (!q || !t) return 0;
@@ -350,34 +518,26 @@ function rankByTitle(searchNames, results) {
 /* ─── Arabic chapter fetcher ─── */
 async function fetchArabicChapter(searchNames, chapterNum, mdId) {
   const target = parseFloat(chapterNum);
-  // despair-manga — ranked by title similarity
-  for (const name of searchNames) {
-    const raw = await despairSearch(name);
-    const ranked = rankByTitle(searchNames, raw);
-    for (const res of ranked.slice(0, 3)) {
+
+  // All Arabic WP-Manga sites — ranked by title similarity
+  for (const { name: srcName, scraper } of ARABIC_SITES) {
+    for (const qName of searchNames) {
       try {
-        const chapters = await despairChapters(res.slug);
-        const found = chapters.find(c => Math.abs(c.num - target) < 0.01);
-        if (!found) continue;
-        const pages = await despairPages(found.url);
-        if (pages.length) return { pages, source: "ديسبر مانجا", referer: found.url };
+        const raw = await scraper.search(qName);
+        const ranked = rankByTitle(searchNames, raw);
+        for (const res of ranked.slice(0, 3)) {
+          try {
+            const chapters = await scraper.chapters(res.slug);
+            const found = chapters.find(c => Math.abs(c.num - target) < 0.01);
+            if (!found) continue;
+            const pages = await scraper.pages(found.url);
+            if (pages.length) return { pages, source: srcName, referer: found.url };
+          } catch (_) {}
+        }
       } catch (_) {}
     }
   }
-  // 3asq — ranked by title similarity
-  for (const name of searchNames) {
-    const raw = await asqSearch(name);
-    const ranked = rankByTitle(searchNames, raw);
-    for (const res of ranked.slice(0, 4)) {
-      try {
-        const chapters = await asqChapters(res.slug);
-        const found = chapters.find(c => Math.abs(c.num - target) < 0.01);
-        if (!found) continue;
-        const pages = await asqPages(found.url);
-        if (pages.length) return { pages, source: "3عشق", referer: found.url };
-      } catch (_) {}
-    }
-  }
+
   // MangaDex Arabic — use mdId directly if available, else loop all names
   if (mdId) {
     const ch = await mdChapter(mdId, chapterNum, "ar");
@@ -396,6 +556,11 @@ async function fetchArabicChapter(searchNames, chapterNum, mdId) {
       if (pages.length) return { pages, source: "MangaDex 🇸🇦", referer: "https://mangadex.org/" };
     }
   }
+
+  // Comick.io Arabic fallback
+  const comickAr = await fetchComickChapter(searchNames, chapterNum, "ar");
+  if (comickAr) return comickAr;
+
   return null;
 }
 
@@ -409,7 +574,7 @@ async function fetchEnglishChapter(searchNames, chapterNum, mdId) {
     }
     return null;
   }
-  // No mdId — search by name
+  // No mdId — search by name on MangaDex
   for (const name of searchNames) {
     const mdManga = await mdSearch(name).catch(() => null);
     if (!mdManga) continue;
@@ -419,24 +584,29 @@ async function fetchEnglishChapter(searchNames, chapterNum, mdId) {
       if (pages.length) return { pages, source: "MangaDex 🇬🇧", referer: "https://mangadex.org/", chTitle: ch.attributes?.title || "" };
     }
   }
+
+  // Comick.io English
+  const comickEn = await fetchComickChapter(searchNames, chapterNum, "en");
+  if (comickEn) return comickEn;
+
+  // Nhentai fallback (hentai titles)
+  const nhentai = await fetchNhentaiChapter(searchNames, chapterNum);
+  if (nhentai) return nhentai;
+
   return null;
 }
 
 async function getArabicInfo(searchNames) {
-  for (const name of searchNames) {
-    const raw = await despairSearch(name);
-    const ranked = rankByTitle(searchNames, raw);
-    for (const res of ranked.slice(0, 2)) {
-      const chapters = await despairChapters(res.slug);
-      if (chapters.length) return { nums: chapters.map(c => c.num), source: "ديسبر مانجا", title: res.title };
-    }
-  }
-  for (const name of searchNames) {
-    const raw = await asqSearch(name);
-    const ranked = rankByTitle(searchNames, raw);
-    for (const res of ranked.slice(0, 3)) {
-      const chapters = await asqChapters(res.slug);
-      if (chapters.length) return { nums: chapters.map(c => c.num), source: "3عشق", title: res.title };
+  for (const { name: srcName, scraper } of ARABIC_SITES) {
+    for (const qName of searchNames) {
+      try {
+        const raw = await scraper.search(qName);
+        const ranked = rankByTitle(searchNames, raw);
+        for (const res of ranked.slice(0, 2)) {
+          const chapters = await scraper.chapters(res.slug);
+          if (chapters.length) return { nums: chapters.map(c => c.num), source: srcName, title: res.title };
+        }
+      } catch (_) {}
     }
   }
   return null;
