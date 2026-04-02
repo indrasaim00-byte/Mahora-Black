@@ -391,17 +391,17 @@ async function fetchArabicChapter(searchNames, chapterNum, mdId) {
 }
 
 async function fetchEnglishChapter(searchNames, chapterNum, mdId) {
-  // Use mdId directly if provided, else search by name
-  const mdMangaId = mdId || await mdSearch(searchNames[0]).then(m => m?.id).catch(() => null);
-  if (mdMangaId) {
-    const ch = await mdChapter(mdMangaId, chapterNum, "en");
+  if (mdId) {
+    // mdId known — use it exclusively, no name-based fallback
+    const ch = await mdChapter(mdId, chapterNum, "en");
     if (ch) {
       const pages = await mdPages(ch.id);
       if (pages.length) return { pages, source: "MangaDex 🇬🇧", referer: "https://mangadex.org/", chTitle: ch.attributes?.title || "" };
     }
+    return null;
   }
-  // fallback: try remaining names
-  for (const name of searchNames.slice(1)) {
+  // No mdId — search by name
+  for (const name of searchNames) {
     const mdManga = await mdSearch(name).catch(() => null);
     if (!mdManga) continue;
     const ch = await mdChapter(mdManga.id, chapterNum, "en");
