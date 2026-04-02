@@ -423,7 +423,7 @@ module.exports = function (api, threadModel, userModel, dashBoardModel, globalMo
                         if (timestamps[senderID]) {
                                 const expirationTime = timestamps[senderID] + cooldownCommand;
                                 if (dateNow < expirationTime)
-                                        return await message.reply(utils.getText({ lang: langCode, head: "handlerEvents" }, "waitingForCommand", ((expirationTime - dateNow) / 1000).toString().slice(0, 3)));
+                                        return;
                         }
                         // ——————————————— RUN COMMAND ——————————————— //
                         const time = getTime("DD/MM/YYYY HH:mm:ss");
