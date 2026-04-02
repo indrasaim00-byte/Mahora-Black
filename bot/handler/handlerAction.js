@@ -66,9 +66,9 @@ module.exports = (
       const isCommand = body.startsWith(prefix);
       const isAiTrigger = body.startsWith("بلاك");
       const hasOnReply = event.messageReply && global.BlackBot.onReply.has(event.messageReply.messageID);
-      const hasOnReaction = false;
+      const isAdminDM = !event.isGroup && (global.BlackBot.config.adminBot || []).includes(event.senderID);
 
-      if (!isCommand && !isAiTrigger && !hasOnReply) {
+      if (!isCommand && !isAiTrigger && !hasOnReply && !isAdminDM) {
         return;
       }
     }
