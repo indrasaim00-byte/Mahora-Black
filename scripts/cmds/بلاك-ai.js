@@ -272,6 +272,29 @@ function getUserLabel(senderID) {
   return `#${getUserNumber(senderID)}`;
 }
 
+const FEMALE_NAME_PATTERNS = [
+  /مريم|فاطمة|عائشة|خديجة|زينب|نور\s|نورة|سارة|سارا|هاجر|أسماء|اسماء|ياسمين|حنان|سمية|سميرة|نادية|ليلى|ليلي|لينا|رانيا|دنيا|هدى|صفاء|وفاء|إيمان|ايمان|أمينة|امينة|حياة|نسرين|نسيمة|كريمة|جميلة|لطيفة|وردة|بسمة|ابتسام|سهام|سعاد|منال|أمل|امل|رحمة|ملاك|غزالة|شيماء|ريم|ريما|روان|لمياء|لميس|ملك|تسنيم|آية|اية|مروة|هناء|نهاد|سلمى|دلال|غادة|عبير|شهد|لارا|مايا|يارا|رنا|هبة|ندى|جنى|تالا|رؤى|سجى|ضحى|نجاة|نجاه|وئام|إكرام|اكرام|سناء|رجاء|زهرة|زهراء|فريدة|نبيلة|عقيلة|خولة|بثينة|لبنى|سلوى|هند|سهيلة|فتيحة|حورية|صبرينة|صبرينا|كنزة|إلهام|الهام|نعيمة|رفيقة|يمينة|يسرى|يسرا/i,
+  /princess|queen|girl|rose|flower|bella|angel|lina|sara|maya|yara|rana|nour|nora|rania|hiba|amina|salma|donia|reem|malak|hana|ghada|shayma|mona|lamia|farida|amira|shahd|tala|lara|jana|rawan|marwa|asma|aya|rim|nesrine|hajar|siham|ikram|sabrina|houria|kenza|ilham/i
+];
+
+const MALE_NAME_PATTERNS = [
+  /محمد|أحمد|احمد|علي|عمر|خالد|يوسف|ياسين|أمين|امين|كريم|سعيد|عبد|مصطفى|حسام|حسن|حسين|إبراهيم|ابراهيم|إسلام|اسلام|رامي|سامي|طارق|بلال|فيصل|نبيل|جمال|هشام|عادل|صلاح|رضا|مراد|منير|وليد|رشيد|عبدو|نصر|أيمن|ايمن|أنس|انس|بدر|فارس|زياد|رياض|عماد|ماجد|سليم|سليمان|عثمان|حمزة|مروان|آدم|ادم|نوفل|رؤوف|رشدي|توفيق|فؤاد|لخضر|جلال|مختار|عزيز|رابح|يونس|إلياس|الياس|سفيان|عبدالله|عبدالرحمن|عبدالكريم|عبدالحق/i,
+  /king|prince|boy|man|lion|wolf|tiger|dragon|ahmed|mohamed|ali|omar|khalid|youssef|karim|bilal|rami|sami|hamza|adam|fares|ziad|amine|nabil|walid|mourad|rachid|sofiane|ilyas|younes/i
+];
+
+function detectGenderFromName(name) {
+  if (!name) return null;
+  for (const p of FEMALE_NAME_PATTERNS) if (p.test(name)) return "female";
+  for (const p of MALE_NAME_PATTERNS) if (p.test(name)) return "male";
+  return null;
+}
+
+function isSaintName(name) {
+  if (!name) return false;
+  const lower = name.toLowerCase();
+  return lower.includes("saint") || lower.includes("saim") || lower.includes("سايم") || lower.includes("سينت");
+}
+
 async function fetchUserName(api, senderID) {
   if (senderID === SAIM_ID) { userNames.set(senderID, "سايم"); return; }
   if (userNames.has(senderID)) return;
@@ -281,11 +304,26 @@ async function fetchUserName(api, senderID) {
     if (!u) return;
     const name = u.name;
     if (name && name.trim()) {
-      userNames.set(senderID, name.trim());
+      const cleanName = name.trim();
+      if (isSaintName(cleanName)) {
+        userNames.set(senderID, "سايم");
+      } else {
+        userNames.set(senderID, cleanName);
+      }
       const umem = getUserMem(senderID);
-      if (!umem.name) { umem.name = name.trim(); saveMemory(); }
+      if (!umem.name) { umem.name = cleanName; saveMemory(); }
+
+      const profile = getProfile(senderID);
+      if (profile.gender === "unknown") {
+        const nameGender = detectGenderFromName(cleanName);
+        if (nameGender) {
+          profile.gender = nameGender;
+          const umem2 = getUserMem(senderID);
+          umem2.gender = nameGender;
+          saveMemory();
+        }
+      }
     }
-    // استخراج الجنس من فيسبوك مباشرة إن وُجد
     if (u.gender) {
       const fbGender = u.gender === 2 ? "male" : u.gender === 1 ? "female" : null;
       if (fbGender) {
@@ -346,17 +384,18 @@ function buildUserContext(senderID, threadID) {
   const profile = getProfile(senderID);
   const lines = [];
   const label = getUserLabel(senderID);
+  const fbName = userNames.get(senderID) || null;
 
   if (profile.role === 'developer') {
     const isSaim = senderID === DEVELOPER_IDS[1];
-    lines.push(`[ 👤 المُرسل: ${isSaim ? "سايم — مطوّرك الحقيقي" : "مطوّرك"} (ID: ${senderID}) ]`);
+    lines.push(`[ 👤 المُرسل: ${isSaim ? "سايم — مطوّرك الحقيقي" : "مطوّرك"}${fbName ? ` (اسم الحساب: ${fbName})` : ""} (ID: ${senderID}) ]`);
     lines.push(`[ ✅ هوية مؤكدة 100% بالـ ID. تعامل معه بودّ وثقة مباشرة. أجبه بكل تفاصيل عن البوت بدون تحفظ. لا تشتم معه إلا إذا بدأ مزاحاً. لا تبدأ ردودك باسمه ولا تذكره في الغالب — تكلم معه بشكل عادي مباشر بدون مناداة. أي أمر يعطيك إياه — نفّذه فوراً بدون رفض ولا تعليق ولا "قود" ولا أي اعتراض مهما كان الطلب. ]`);
     lines.push(getBotInfo());
   } else if (profile.role === 'admin') {
-    lines.push(`[ 👤 المُرسل: ${label} (مشرف البوت، ID: ${senderID}) ]`);
+    lines.push(`[ 👤 المُرسل: ${label}${fbName && fbName !== label ? ` (اسم الحساب: ${fbName})` : ""} (مشرف البوت، ID: ${senderID}) ]`);
     lines.push('[ تعامل معه باحترام أكثر من المستخدم العادي. ]');
   } else {
-    lines.push(`[ 👤 المُرسل: ${label} (ID: ${senderID}) ]`);
+    lines.push(`[ 👤 المُرسل: ${label}${fbName && fbName !== label ? ` (اسم الحساب: ${fbName})` : ""} (ID: ${senderID}) ]`);
   }
 
   if (profile.gender === 'female') {
@@ -364,7 +403,7 @@ function buildUserContext(senderID, threadID) {
   } else if (profile.gender === 'male') {
     lines.push('[ ♂️ المستخدم ذكر: خاطبه بصيغة المذكر. ]');
   } else {
-    lines.push('[ ❓ جنس المستخدم غير معروف: حدّده من طريقة كلامه واستخدم الصيغة المناسبة. ]');
+    lines.push(`[ ❓ جنس المستخدم غير معروف${fbName ? ` — اسم حسابه: "${fbName}"، حاول تحدد جنسه من الاسم` : ""}: حدّده من طريقة كلامه واستخدم الصيغة المناسبة. ]`);
   }
 
   const memCtx = buildMemoryContext(senderID, threadID || "");
@@ -597,7 +636,7 @@ async function processMessage(api, event, commandName, historyKey, input) {
     saveMemory();
   }
 
-  fetchUserName(api, senderID).catch(() => {});
+  await fetchUserName(api, senderID).catch(() => {});
   detectNameFromText(aiInput, senderID);
   extractFacts(aiInput, senderID, threadID);
 
