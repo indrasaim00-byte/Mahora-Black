@@ -8,376 +8,323 @@ const HF_TOKEN = process.env.HF_TOKEN;
 const FB_TOKEN = "6628568379%7Cc1e620fa708a1d5696fb991c1bde5662";
 
 function easeInOut(t) {
-        return t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
+	return t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
 }
 function easeOut(t) {
-        return 1 - Math.pow(1 - t, 3);
+	return 1 - Math.pow(1 - t, 3);
 }
 
 async function fetchProfilePic(userID, savePath) {
-        const url = `https://graph.facebook.com/${userID}/picture?width=720&height=720&access_token=${FB_TOKEN}`;
-        const res = await axios.get(url, { responseType: "arraybuffer", timeout: 15000, maxRedirects: 10 });
-        fs.writeFileSync(savePath, Buffer.from(res.data));
+	const url = `https://graph.facebook.com/${userID}/picture?width=720&height=720&access_token=${FB_TOKEN}`;
+	const res = await axios.get(url, { responseType: "arraybuffer", timeout: 15000, maxRedirects: 10 });
+	fs.writeFileSync(savePath, Buffer.from(res.data));
 }
 
 async function detectFace(imagePath) {
-        try {
-                const imageBuffer = fs.readFileSync(imagePath);
-                const res = await axios.post(
-                        "https://api-inference.huggingface.co/models/facebook/detr-resnet-50",
-                        imageBuffer,
-                        {
-                                headers: {
-                                        Authorization: `Bearer ${HF_TOKEN}`,
-                                        "Content-Type": "image/jpeg",
-                                        "x-wait-for-model": "true"
-                                },
-                                timeout: 45000
-                        }
-                );
-                const items = res.data || [];
-                const person = items.find(d => d.label === "person");
-                if (person && person.box) return person.box;
-        } catch (e) {
-                console.error("[قبلة][FaceDetect]", e.message);
-        }
-        return null;
+	try {
+		const imageBuffer = fs.readFileSync(imagePath);
+		const res = await axios.post(
+			"https://api-inference.huggingface.co/models/facebook/detr-resnet-50",
+			imageBuffer,
+			{
+				headers: {
+					Authorization: `Bearer ${HF_TOKEN}`,
+					"Content-Type": "image/jpeg",
+					"x-wait-for-model": "true"
+				},
+				timeout: 45000
+			}
+		);
+		const items = res.data || [];
+		const person = items.find(d => d.label === "person");
+		if (person && person.box) return person.box;
+	} catch (e) {
+		console.error("[قبلة][FaceDetect]", e.message);
+	}
+	return null;
 }
 
 async function captionImage(imagePath) {
-        try {
-                const imageBuffer = fs.readFileSync(imagePath);
-                const res = await axios.post(
-                        "https://api-inference.huggingface.co/models/Salesforce/blip-image-captioning-base",
-                        imageBuffer,
-                        {
-                                headers: {
-                                        Authorization: `Bearer ${HF_TOKEN}`,
-                                        "Content-Type": "image/jpeg",
-                                        "x-wait-for-model": "true"
-                                },
-                                timeout: 45000
-                        }
-                );
-                const data = res.data;
-                if (Array.isArray(data) && data[0]?.generated_text) {
-                        return data[0].generated_text;
-                }
-        } catch (e) {
-                console.error("[قبلة][Caption]", e.message);
-        }
-        return null;
+	try {
+		const imageBuffer = fs.readFileSync(imagePath);
+		const res = await axios.post(
+			"https://api-inference.huggingface.co/models/Salesforce/blip-image-captioning-base",
+			imageBuffer,
+			{
+				headers: {
+					Authorization: `Bearer ${HF_TOKEN}`,
+					"Content-Type": "image/jpeg",
+					"x-wait-for-model": "true"
+				},
+				timeout: 45000
+			}
+		);
+		const data = res.data;
+		if (Array.isArray(data) && data[0]?.generated_text) return data[0].generated_text;
+	} catch (e) {
+		console.error("[قبلة][Caption]", e.message);
+	}
+	return null;
 }
 
 async function generateRomanticStory(name1, name2, desc1, desc2) {
-        try {
-                const prompt = `اكتب قصة رومانسية قصيرة وجميلة لا تتجاوز 3 جمل بين شخصين اسمهما ${name1} و${name2}. ${desc1 ? `${name1} يبدو: ${desc1}.` : ""} ${desc2 ? `${name2} يبدو: ${desc2}.` : ""} اجعل القصة باللغة العربية ومليئة بالمشاعر والرومانسية.`;
-                const res = await axios.get(
-                        `https://betadash-api-swordslush-production.up.railway.app/you?chat=${encodeURIComponent(prompt)}`,
-                        { timeout: 20000 }
-                );
-                const story = res.data?.response;
-                if (story) return story;
-        } catch (e) {
-                console.error("[قبلة][Story]", e.message);
-        }
-        return null;
+	try {
+		const prompt = `اكتب قصة رومانسية قصيرة وجميلة لا تتجاوز 3 جمل بين شخصين اسمهما ${name1} و${name2}. ${desc1 ? `${name1} يبدو: ${desc1}.` : ""} ${desc2 ? `${name2} يبدو: ${desc2}.` : ""} اجعل القصة باللغة العربية ومليئة بالمشاعر والرومانسية.`;
+		const res = await axios.get(
+			`https://betadash-api-swordslush-production.up.railway.app/you?chat=${encodeURIComponent(prompt)}`,
+			{ timeout: 20000 }
+		);
+		const story = res.data?.response;
+		if (story) return story;
+	} catch (e) {
+		console.error("[قبلة][Story]", e.message);
+	}
+	return null;
 }
 
-async function generateAIRomanticImage(name1, name2, tmpDir) {
-        try {
-                const aiPrompt = `two people sharing a romantic kiss, soft pink and red lighting, hearts floating, dreamy romantic atmosphere, beautiful artistic style, ${name1} and ${name2}`;
-                const url = `https://renzweb.onrender.com/api/imagen3?prompt=${encodeURIComponent(aiPrompt)}`;
-                const res = await axios.get(url, { responseType: "arraybuffer", timeout: 60000 });
-                const aiImgPath = path.join(tmpDir, "ai_romantic.jpg");
-                fs.writeFileSync(aiImgPath, Buffer.from(res.data, "binary"));
-                return aiImgPath;
-        } catch (e) {
-                console.error("[قبلة][AIImage]", e.message);
-        }
-        return null;
+function getFaceCenterFromBox(box, imgW, imgH) {
+	if (!box) return { cx: 0.5, cy: 0.4 };
+	const cx = ((box.xmin + box.xmax) / 2) / imgW;
+	const cy = ((box.ymin + box.ymax) / 2) / imgH;
+	return { cx, cy };
 }
 
-function cropFaceImage(ctx, img, box, imgW, imgH, destX, destY, destW, destH, mirrorX) {
-        const srcX = box ? Math.max(0, box.xmin * img.width / imgW) : 0;
-        const srcY = box ? Math.max(0, box.ymin * img.height / imgH * 0.5) : 0;
-        const srcW = box ? Math.min(img.width - srcX, (box.xmax - box.xmin) * img.width / imgW) : img.width;
-        const srcH = box ? Math.min(img.height - srcY, (box.ymax - box.ymin) * img.height / imgH * 1.3) : img.height;
+function drawSplitKissFrame(ctx, img1, img2, box1, box2, W, H, progress, senderName, targetName) {
+	const phase1End = 0.30;
+	const phase2End = 0.65;
+	const phase3End = 0.85;
 
-        ctx.save();
-        if (mirrorX) {
-                ctx.scale(-1, 1);
-                ctx.drawImage(img, srcX, srcY, srcW, srcH, -destX - destW, destY, destW, destH);
-        } else {
-                ctx.drawImage(img, srcX, srcY, srcW, srcH, destX, destY, destW, destH);
-        }
-        ctx.restore();
-}
+	const face1 = getFaceCenterFromBox(box1, 720, 720);
+	const face2 = getFaceCenterFromBox(box2, 720, 720);
 
-function drawRomanticFrame(ctx, img1, img2, box1, box2, W, H, progress, senderName, targetName) {
-        const phase1 = 0.25;
-        const phase2 = 0.60;
-        const phase3 = 0.80;
-        const phase4 = 1.00;
+	let zoom, panOffset, bgAlpha, nameAlpha, kissAlpha;
 
-        let bgAlpha, faceScale, faceOffset, heartCount, flashAlpha, textAlpha;
+	if (progress <= phase1End) {
+		const p = easeInOut(progress / phase1End);
+		zoom = 1.0 + p * 0.3;
+		panOffset = 0;
+		bgAlpha = p;
+		nameAlpha = 0;
+		kissAlpha = 0;
+	} else if (progress <= phase2End) {
+		const p = easeInOut((progress - phase1End) / (phase2End - phase1End));
+		zoom = 1.3 + p * 0.5;
+		panOffset = p * 0.18;
+		bgAlpha = 1;
+		nameAlpha = 0;
+		kissAlpha = 0;
+	} else if (progress <= phase3End) {
+		const p = easeOut((progress - phase2End) / (phase3End - phase2End));
+		zoom = 1.8 + p * 0.35;
+		panOffset = 0.18 + p * 0.10;
+		bgAlpha = 1;
+		nameAlpha = 0;
+		kissAlpha = p * 0.7;
+	} else {
+		const p = easeOut((progress - phase3End) / (1.0 - phase3End));
+		zoom = 2.15 + p * 0.05;
+		panOffset = 0.28;
+		bgAlpha = 1;
+		nameAlpha = p;
+		kissAlpha = 0.7 + p * 0.1;
+	}
 
-        if (progress <= phase1) {
-                const p = easeInOut(progress / phase1);
-                faceScale = 0.70 + p * 0.15;
-                faceOffset = 0.42 - p * 0.02;
-                heartCount = 0;
-                flashAlpha = 0;
-                bgAlpha = p;
-                textAlpha = 0;
-        } else if (progress <= phase2) {
-                const p = easeInOut((progress - phase1) / (phase2 - phase1));
-                faceScale = 0.85 + p * 0.20;
-                faceOffset = 0.40 - p * 0.38;
-                heartCount = Math.floor(p * 5);
-                flashAlpha = 0;
-                bgAlpha = 1;
-                textAlpha = 0;
-        } else if (progress <= phase3) {
-                const p = easeOut((progress - phase2) / (phase3 - phase2));
-                faceScale = 1.05 + p * 0.15;
-                faceOffset = 0.02 - p * 0.02;
-                heartCount = 5 + Math.floor(p * 4);
-                flashAlpha = p * 0.65;
-                bgAlpha = 1;
-                textAlpha = 0;
-        } else {
-                const p = easeOut((progress - phase3) / (phase4 - phase3));
-                faceScale = 1.20 + p * 0.05;
-                faceOffset = 0;
-                heartCount = 9;
-                flashAlpha = 0.65 - p * 0.40;
-                bgAlpha = 1;
-                textAlpha = p;
-        }
+	ctx.fillStyle = "#000000";
+	ctx.fillRect(0, 0, W, H);
 
-        const bgGrad = ctx.createRadialGradient(W / 2, H / 2, 0, W / 2, H / 2, W * 0.75);
-        bgGrad.addColorStop(0, `rgba(60,0,30,${bgAlpha})`);
-        bgGrad.addColorStop(0.5, `rgba(100,0,50,${bgAlpha})`);
-        bgGrad.addColorStop(1, `rgba(20,0,15,${bgAlpha})`);
-        ctx.fillStyle = bgGrad;
-        ctx.fillRect(0, 0, W, H);
+	const drawDramaticPanel = (img, faceCenter, panelX, panelW, facingRight, panOffset) => {
+		ctx.save();
+		ctx.beginPath();
+		ctx.rect(panelX, 0, panelW, H);
+		ctx.clip();
 
-        const particleCount = 18;
-        for (let i = 0; i < particleCount; i++) {
-                const angle = (i / particleCount) * Math.PI * 2 + progress * 1.2;
-                const r = W * (0.30 + 0.08 * Math.sin(progress * 3 + i));
-                const px = W / 2 + Math.cos(angle) * r;
-                const py = H / 2 + Math.sin(angle) * r * 0.55;
-                const alpha = 0.03 + 0.04 * Math.sin(progress * 5 + i);
-                ctx.save();
-                ctx.globalAlpha = alpha * bgAlpha;
-                ctx.fillStyle = "#ff69b4";
-                ctx.beginPath();
-                ctx.arc(px, py, 2 + Math.sin(i) * 1.5, 0, Math.PI * 2);
-                ctx.fill();
-                ctx.restore();
-        }
+		const srcFaceX = faceCenter.cx * img.width;
+		const srcFaceY = faceCenter.cy * img.height;
 
-        const faceSize = Math.min(W, H) * faceScale * 0.52;
-        const centerY = H * 0.48;
-        const leftCX = W / 2 - faceOffset * W - (faceSize * 0.5);
-        const rightCX = W / 2 + faceOffset * W + (faceSize * 0.5);
+		const drawH = H * zoom;
+		const drawW = img.width * (drawH / img.height);
 
-        const drawCircleFace = (img, box, cx, cy, size, mirror) => {
-                ctx.save();
-                ctx.beginPath();
-                ctx.arc(cx, cy, size / 2, 0, Math.PI * 2);
-                ctx.clip();
-                const shadowGrad = ctx.createRadialGradient(cx - size * 0.1, cy - size * 0.1, 0, cx, cy, size / 2);
-                shadowGrad.addColorStop(0, "rgba(255,180,180,0.15)");
-                shadowGrad.addColorStop(1, "rgba(0,0,0,0.35)");
-                cropFaceImage(ctx, img, box, 720, 720, cx - size / 2, cy - size / 2, size, size, mirror);
-                ctx.fillStyle = shadowGrad;
-                ctx.beginPath();
-                ctx.arc(cx, cy, size / 2, 0, Math.PI * 2);
-                ctx.fill();
-                ctx.restore();
+		let destX;
+		if (facingRight) {
+			destX = panelX + panelW - drawW + (panelW - drawW * (1 - faceCenter.cx)) + panOffset * W;
+			destX = panelX - (srcFaceX / img.width) * drawW + panelW * 0.85 + panOffset * W;
+		} else {
+			destX = panelX - (srcFaceX / img.width) * drawW + panelW * 0.15 - panOffset * W;
+		}
 
-                ctx.save();
-                const borderGrad = ctx.createLinearGradient(cx - size / 2, cy - size / 2, cx + size / 2, cy + size / 2);
-                borderGrad.addColorStop(0, "rgba(255,150,180,0.9)");
-                borderGrad.addColorStop(0.5, "rgba(255,80,120,0.7)");
-                borderGrad.addColorStop(1, "rgba(200,50,100,0.9)");
-                ctx.strokeStyle = borderGrad;
-                ctx.lineWidth = 4;
-                ctx.beginPath();
-                ctx.arc(cx, cy, size / 2 + 2, 0, Math.PI * 2);
-                ctx.stroke();
-                ctx.restore();
-        };
+		const destY = H / 2 - (srcFaceY / img.height) * drawH + H * 0.05;
 
-        drawCircleFace(img1, box1, leftCX + faceSize * 0.5, centerY, faceSize, false);
-        drawCircleFace(img2, box2, rightCX - faceSize * 0.5, centerY, faceSize, true);
+		ctx.filter = "contrast(1.1) saturate(0.85)";
+		ctx.drawImage(img, destX, destY, drawW, drawH);
+		ctx.filter = "none";
 
-        if (progress > phase2 - 0.05) {
-                const kissProgress = Math.max(0, (progress - (phase2 - 0.05)) / 0.05);
-                const glow = ctx.createRadialGradient(W / 2, centerY, 0, W / 2, centerY, faceSize * 0.6);
-                glow.addColorStop(0, `rgba(255,120,180,${0.35 * kissProgress})`);
-                glow.addColorStop(1, "rgba(255,80,120,0)");
-                ctx.fillStyle = glow;
-                ctx.fillRect(0, 0, W, H);
+		const vigDir = facingRight ? "to right" : "to left";
+		const edgeGrad = ctx.createLinearGradient(
+			facingRight ? panelX + panelW * 0.5 : panelX,
+			0,
+			facingRight ? panelX + panelW : panelX + panelW * 0.5,
+			0
+		);
+		edgeGrad.addColorStop(0, "rgba(0,0,0,0)");
+		edgeGrad.addColorStop(1, "rgba(0,0,0,0.88)");
+		ctx.fillStyle = edgeGrad;
+		ctx.fillRect(panelX, 0, panelW, H);
 
-                ctx.save();
-                ctx.globalAlpha = 0.7 * kissProgress;
-                ctx.font = `${Math.floor(faceSize * 0.35)}px serif`;
-                ctx.textAlign = "center";
-                ctx.textBaseline = "middle";
-                ctx.fillText("💋", W / 2, centerY);
-                ctx.restore();
-        }
+		const topGrad = ctx.createLinearGradient(0, 0, 0, H * 0.25);
+		topGrad.addColorStop(0, "rgba(0,0,0,0.7)");
+		topGrad.addColorStop(1, "rgba(0,0,0,0)");
+		ctx.fillStyle = topGrad;
+		ctx.fillRect(panelX, 0, panelW, H);
 
-        if (flashAlpha > 0) {
-                ctx.save();
-                ctx.globalAlpha = flashAlpha;
-                const flashGrad = ctx.createRadialGradient(W / 2, centerY, 0, W / 2, centerY, W * 0.6);
-                flashGrad.addColorStop(0, "rgba(255,220,240,1)");
-                flashGrad.addColorStop(0.3, "rgba(255,150,200,0.5)");
-                flashGrad.addColorStop(1, "rgba(255,80,120,0)");
-                ctx.fillStyle = flashGrad;
-                ctx.fillRect(0, 0, W, H);
-                ctx.restore();
-        }
+		const botGrad = ctx.createLinearGradient(0, H * 0.75, 0, H);
+		botGrad.addColorStop(0, "rgba(0,0,0,0)");
+		botGrad.addColorStop(1, "rgba(0,0,0,0.75)");
+		ctx.fillStyle = botGrad;
+		ctx.fillRect(panelX, 0, panelW, H);
 
-        const heartEmojis = ["❤️", "💕", "💗", "💓", "💖", "💝", "💞"];
-        for (let i = 0; i < heartCount; i++) {
-                const seed = i * 137.508;
-                const hx = (W * 0.15) + (seed % (W * 0.70));
-                const baseY = H * 0.85 - (i / 9) * H * 0.65;
-                const hy = baseY - (progress * 0.5) * H * 0.5 + Math.sin(progress * 6 + i) * 18;
-                const hSize = 14 + (i % 3) * 6;
-                const hAlpha = Math.max(0, 0.85 - ((H * 0.85 - hy) / (H * 0.65)));
+		ctx.restore();
+	};
 
-                ctx.save();
-                ctx.globalAlpha = hAlpha * Math.min(1, heartCount / 9);
-                ctx.font = `${hSize}px serif`;
-                ctx.textAlign = "center";
-                ctx.fillText(heartEmojis[i % heartEmojis.length], hx, hy);
-                ctx.restore();
-        }
+	drawDramaticPanel(img1, face1, 0, W / 2, true, panOffset);
+	drawDramaticPanel(img2, face2, W / 2, W / 2, false, panOffset);
 
-        if (textAlpha > 0) {
-                const label = `${senderName} 💋 ${targetName}`;
-                ctx.save();
-                ctx.globalAlpha = textAlpha;
-                ctx.font = "bold 20px Arial, sans-serif";
-                ctx.textAlign = "center";
-                ctx.shadowColor = "rgba(255,80,120,0.8)";
-                ctx.shadowBlur = 12;
-                ctx.fillStyle = "#ffffff";
-                ctx.fillText(label, W / 2, H - 28);
-                ctx.restore();
-        }
+	if (kissAlpha > 0) {
+		const kissGlow = ctx.createRadialGradient(W / 2, H * 0.45, 0, W / 2, H * 0.45, W * 0.25);
+		kissGlow.addColorStop(0, `rgba(255, 180, 200, ${kissAlpha * 0.55})`);
+		kissGlow.addColorStop(0.5, `rgba(255, 100, 140, ${kissAlpha * 0.25})`);
+		kissGlow.addColorStop(1, "rgba(255,80,120,0)");
+		ctx.fillStyle = kissGlow;
+		ctx.fillRect(0, 0, W, H);
 
-        const vigGrad = ctx.createRadialGradient(W / 2, H / 2, H * 0.25, W / 2, H / 2, W * 0.72);
-        vigGrad.addColorStop(0, "rgba(0,0,0,0)");
-        vigGrad.addColorStop(1, "rgba(0,0,0,0.55)");
-        ctx.fillStyle = vigGrad;
-        ctx.fillRect(0, 0, W, H);
+		ctx.save();
+		ctx.globalAlpha = kissAlpha * 0.85;
+		ctx.font = `${Math.floor(H * 0.18)}px serif`;
+		ctx.textAlign = "center";
+		ctx.textBaseline = "middle";
+		ctx.fillText("💋", W / 2, H * 0.45);
+		ctx.restore();
+
+		const sparkCount = 8;
+		for (let i = 0; i < sparkCount; i++) {
+			const angle = (i / sparkCount) * Math.PI * 2 + progress * 4;
+			const r = W * 0.08 + W * 0.04 * Math.sin(progress * 8 + i);
+			const sx = W / 2 + Math.cos(angle) * r;
+			const sy = H * 0.45 + Math.sin(angle) * r * 0.7;
+			ctx.save();
+			ctx.globalAlpha = kissAlpha * 0.6 * (0.5 + 0.5 * Math.sin(progress * 6 + i));
+			ctx.fillStyle = "#ffb3c6";
+			ctx.font = `${10 + i % 3 * 4}px serif`;
+			ctx.textAlign = "center";
+			ctx.fillText(["✨", "💕", "❤️", "✨"][i % 4], sx, sy);
+			ctx.restore();
+		}
+	}
+
+	if (nameAlpha > 0) {
+		ctx.save();
+		ctx.globalAlpha = nameAlpha;
+		const nameLabel = `${senderName} 💋 ${targetName}`;
+		ctx.font = "bold 22px Arial, sans-serif";
+		ctx.textAlign = "center";
+		ctx.shadowColor = "rgba(255,80,120,1)";
+		ctx.shadowBlur = 18;
+		ctx.fillStyle = "#ffffff";
+		ctx.fillText(nameLabel, W / 2, H - 30);
+		ctx.restore();
+	}
 }
 
 module.exports = {
-        config: {
-                name: "قبلة",
-                aliases: ["kiss"],
-                version: "7.0",
-                author: "BlackBot",
-                countDown: 20,
-                role: 0,
-                shortDescription: "🤖 فيديو قبلة رومانسي بالذكاء الاصطناعي الكامل",
-                longDescription: "يستخدم الذكاء الاصطناعي لتحليل الصور وتوليد قصة رومانسية وصورة AI وفيديو رومانسي مخصص",
-                category: "fun",
-                guide: "{pn} @ذكر أو رد على رسالة"
-        },
+	config: {
+		name: "قبلة",
+		aliases: ["kiss"],
+		version: "8.0",
+		author: "BlackBot",
+		countDown: 20,
+		role: 0,
+		shortDescription: "🤖 فيديو قبلة سينمائي بالذكاء الاصطناعي",
+		longDescription: "يولّد فيديو سينمائي درامي يجمع الشخصين في مشهد قبلة بأسلوب الأنيمي مع قصة رومانسية AI",
+		category: "fun",
+		guide: "{pn} @ذكر أو رد على رسالة"
+	},
 
-        onStart: async function ({ message, event }) {
-                const tmpDir = path.join(__dirname, `kiss_tmp_${Date.now()}`);
-                fs.mkdirSync(tmpDir, { recursive: true });
+	onStart: async function ({ message, event }) {
+		const tmpDir = path.join(__dirname, `kiss_tmp_${Date.now()}`);
+		fs.mkdirSync(tmpDir, { recursive: true });
 
-                try {
-                        const mention = Object.keys(event.mentions || {});
-                        let targetID;
+		try {
+			const mention = Object.keys(event.mentions || {});
+			let targetID;
 
-                        if (event.messageReply) {
-                                targetID = event.messageReply.senderID;
-                        } else if (mention.length > 0) {
-                                targetID = mention[0];
-                        } else {
-                                fs.rmSync(tmpDir, { recursive: true, force: true });
-                                return message.reply("💋 | اذكر شخصاً أو رد على رسالته\nمثال: .قبلة @اسم");
-                        }
+			if (event.messageReply) {
+				targetID = event.messageReply.senderID;
+			} else if (mention.length > 0) {
+				targetID = mention[0];
+			} else {
+				fs.rmSync(tmpDir, { recursive: true, force: true });
+				return message.reply("💋 | اذكر شخصاً أو رد على رسالته\nمثال: .قبلة @اسم");
+			}
 
-                        const senderID = event.senderID;
-                        const senderName = event.senderName || "شخص";
-                        const targetName = (event.mentions || {})[targetID] || "آخر";
+			const senderID = event.senderID;
+			const senderName = event.senderName || "شخص";
+			const targetName = (event.mentions || {})[targetID] || "آخر";
 
-                        await message.reply(`💋 | جاري تجهيز لحظة رومانسية بين ${senderName} و${targetName} بالذكاء الاصطناعي... 🌹`);
+			await message.reply(`💋 | جاري تجهيز لحظة رومانسية بين ${senderName} و${targetName} بالذكاء الاصطناعي... 🌹`);
 
-                        const img1Path = path.join(tmpDir, "img1.jpg");
-                        const img2Path = path.join(tmpDir, "img2.jpg");
+			const img1Path = path.join(tmpDir, "img1.jpg");
+			const img2Path = path.join(tmpDir, "img2.jpg");
 
-                        await Promise.all([
-                                fetchProfilePic(senderID, img1Path),
-                                fetchProfilePic(targetID, img2Path)
-                        ]);
+			await Promise.all([
+				fetchProfilePic(senderID, img1Path),
+				fetchProfilePic(targetID, img2Path)
+			]);
 
-                        const [box1, box2, desc1, desc2] = await Promise.all([
-                                detectFace(img1Path),
-                                detectFace(img2Path),
-                                captionImage(img1Path),
-                                captionImage(img2Path)
-                        ]);
+			const [box1, box2, desc1, desc2] = await Promise.all([
+				detectFace(img1Path),
+				detectFace(img2Path),
+				captionImage(img1Path),
+				captionImage(img2Path)
+			]);
 
-                        const [img1, img2, aiStory, aiImgPath] = await Promise.all([
-                                loadImage(img1Path),
-                                loadImage(img2Path),
-                                generateRomanticStory(senderName, targetName, desc1, desc2),
-                                generateAIRomanticImage(senderName, targetName, tmpDir)
-                        ]);
+			const [img1, img2, aiStory] = await Promise.all([
+				loadImage(img1Path),
+				loadImage(img2Path),
+				generateRomanticStory(senderName, targetName, desc1, desc2)
+			]);
 
-                        const W = 780, H = 440, FPS = 24;
-                        const TOTAL_FRAMES = Math.floor(FPS * 5.0);
+			const W = 780, H = 440, FPS = 24;
+			const TOTAL_FRAMES = Math.floor(FPS * 5.5);
 
-                        for (let f = 0; f < TOTAL_FRAMES; f++) {
-                                const progress = f / (TOTAL_FRAMES - 1);
-                                const canvas = createCanvas(W, H);
-                                const ctx = canvas.getContext("2d");
-                                drawRomanticFrame(ctx, img1, img2, box1, box2, W, H, progress, senderName, targetName);
-                                const framePath = path.join(tmpDir, `frame_${String(f).padStart(4, "0")}.png`);
-                                fs.writeFileSync(framePath, canvas.toBuffer("image/png"));
-                        }
+			for (let f = 0; f < TOTAL_FRAMES; f++) {
+				const progress = f / (TOTAL_FRAMES - 1);
+				const canvas = createCanvas(W, H);
+				const ctx = canvas.getContext("2d");
+				drawSplitKissFrame(ctx, img1, img2, box1, box2, W, H, progress, senderName, targetName);
+				const framePath = path.join(tmpDir, `frame_${String(f).padStart(4, "0")}.png`);
+				fs.writeFileSync(framePath, canvas.toBuffer("image/png"));
+			}
 
-                        const outputPath = path.join(tmpDir, "kiss_output.mp4");
-                        execSync(
-                                `ffmpeg -y -framerate ${FPS} -i "${path.join(tmpDir, "frame_%04d.png")}" ` +
-                                `-vf "scale=${W}:${H}" -c:v libx264 -preset fast -crf 18 -pix_fmt yuv420p "${outputPath}"`,
-                                { timeout: 90000 }
-                        );
+			const outputPath = path.join(tmpDir, "kiss_output.mp4");
+			execSync(
+				`ffmpeg -y -framerate ${FPS} -i "${path.join(tmpDir, "frame_%04d.png")}" ` +
+				`-vf "scale=${W}:${H}" -c:v libx264 -preset fast -crf 18 -pix_fmt yuv420p "${outputPath}"`,
+				{ timeout: 90000 }
+			);
 
-                        const attachments = [fs.createReadStream(outputPath)];
-                        if (aiImgPath && fs.existsSync(aiImgPath)) {
-                                attachments.push(fs.createReadStream(aiImgPath));
-                        }
+			const storyText = aiStory ? `\n\n✨ قصة الذكاء الاصطناعي:\n${aiStory}` : "";
 
-                        const storyText = aiStory ? `\n\n✨ قصة الذكاء الاصطناعي:\n${aiStory}` : "";
+			await message.reply({
+				body: `💋 | ${senderName} قبّل ${targetName} 💕${storyText}`,
+				attachment: fs.createReadStream(outputPath)
+			});
 
-                        await message.reply({
-                                body: `💋 | ${senderName} قبّل ${targetName} 💕\n🤖 تم بواسطة الذكاء الاصطناعي${storyText}`,
-                                attachment: attachments
-                        });
-
-                } catch (err) {
-                        console.error("[قبلة]", err.message || err);
-                        message.reply("❌ | حدث خطأ أثناء إنشاء الفيديو.");
-                } finally {
-                        setTimeout(() => {
-                                try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch (_) {}
-                        }, 60000);
-                }
-        }
+		} catch (err) {
+			console.error("[قبلة]", err.message || err);
+			message.reply("❌ | حدث خطأ أثناء إنشاء الفيديو.");
+		} finally {
+			setTimeout(() => {
+				try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch (_) {}
+			}, 60000);
+		}
+	}
 };
