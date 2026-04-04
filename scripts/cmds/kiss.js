@@ -4,56 +4,140 @@ const path = require("path");
 const { createCanvas, loadImage } = require("canvas");
 const { execSync } = require("child_process");
 
-function drawHeart(ctx, cx, cy, size, color, alpha = 1) {
-        ctx.save();
-        ctx.globalAlpha = alpha;
-        ctx.fillStyle = color;
-        ctx.beginPath();
-        ctx.moveTo(cx, cy + size * 0.3);
-        ctx.bezierCurveTo(cx, cy, cx - size * 0.5, cy, cx - size * 0.5, cy + size * 0.3);
-        ctx.bezierCurveTo(cx - size * 0.5, cy + size * 0.65, cx, cy + size * 0.9, cx, cy + size * 1.1);
-        ctx.bezierCurveTo(cx, cy + size * 0.9, cx + size * 0.5, cy + size * 0.65, cx + size * 0.5, cy + size * 0.3);
-        ctx.bezierCurveTo(cx + size * 0.5, cy, cx, cy, cx, cy + size * 0.3);
-        ctx.closePath();
-        ctx.fill();
-        ctx.restore();
+function easeInOut(t) {
+        return t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
 }
 
-function drawCircleImage(ctx, img, x, y, radius, tilt, glowColor) {
+function lerp(a, b, t) {
+        return a + (b - a) * t;
+}
+
+function drawSplitFrame(ctx, img1, img2, W, H, progress) {
+        ctx.fillStyle = "#000000";
+        ctx.fillRect(0, 0, W, H);
+
+        const phase1End = 0.30;
+        const phase2End = 0.70;
+        const phase3End = 1.00;
+
+        let p1x, p2x, tilt1, tilt2, zoom1, zoom2, splitX, splitBlend;
+        const half = W / 2;
+
+        if (progress <= phase1End) {
+                const p = easeInOut(progress / phase1End);
+                p1x = half * 0.50 - p * half * 0.05;
+                p2x = half * 0.50 + p * half * 0.05;
+                tilt1 = p * 0.03;
+                tilt2 = -p * 0.03;
+                zoom1 = 1.0 + p * 0.05;
+                zoom2 = 1.0 + p * 0.05;
+                splitX = half;
+                splitBlend = 0;
+        } else if (progress <= phase2End) {
+                const p = easeInOut((progress - phase1End) / (phase2End - phase1End));
+                p1x = half * 0.50 - 0.05 * half + p * half * 0.40;
+                p2x = half * 0.50 + 0.05 * half - p * half * 0.40;
+                tilt1 = 0.03 + p * 0.22;
+                tilt2 = -(0.03 + p * 0.22);
+                zoom1 = 1.05 + p * 0.25;
+                zoom2 = 1.05 + p * 0.25;
+                splitX = half - p * half * 0.35;
+                splitBlend = p * 0.5;
+        } else {
+                const p = easeInOut((progress - phase2End) / (phase3End - phase2End));
+                p1x = half * 0.85 + p * half * 0.05;
+                p2x = half * 0.15 - p * half * 0.05;
+                tilt1 = 0.25 + p * 0.08;
+                tilt2 = -(0.25 + p * 0.08);
+                zoom1 = 1.30 + p * 0.10;
+                zoom2 = 1.30 + p * 0.10;
+                splitX = half - 0.35 * half - p * half * 0.20;
+                splitBlend = 0.5 + p * 0.5;
+        }
+
+        const faceH = H * 1.05;
+        const faceW1 = faceH * (img1.width / img1.height) * zoom1;
+        const faceW2 = faceH * (img2.width / img2.height) * zoom2;
+
+        const leftX = p1x - faceW1 * 0.5;
+        const rightX = W - p2x - faceW2 * 0.5;
+        const imgY = (H - faceH) / 2;
+
         ctx.save();
-        ctx.translate(x, y);
-        ctx.rotate(tilt);
-        ctx.shadowColor = glowColor;
-        ctx.shadowBlur = 25;
         ctx.beginPath();
-        ctx.arc(0, 0, radius, 0, Math.PI * 2);
+        ctx.rect(0, 0, splitX, H);
         ctx.clip();
-        ctx.drawImage(img, -radius, -radius, radius * 2, radius * 2);
+        ctx.drawImage(img1, leftX, imgY, faceW1, faceH);
         ctx.restore();
 
         ctx.save();
-        ctx.translate(x, y);
-        ctx.rotate(tilt);
-        ctx.strokeStyle = glowColor;
-        ctx.lineWidth = 4;
-        ctx.shadowColor = glowColor;
-        ctx.shadowBlur = 15;
         ctx.beginPath();
-        ctx.arc(0, 0, radius, 0, Math.PI * 2);
-        ctx.stroke();
+        ctx.rect(splitX, 0, W - splitX, H);
+        ctx.clip();
+        ctx.drawImage(img2, rightX, imgY, faceW2, faceH);
         ctx.restore();
+
+        if (splitBlend > 0) {
+                const overlapW = Math.max(0, (p1x + faceW1 * 0.4) - (W - p2x - faceW2 * 0.4));
+                if (overlapW > 0) {
+                        const overlapStart = W - p2x - faceW2 * 0.4;
+                        ctx.save();
+                        ctx.beginPath();
+                        ctx.rect(overlapStart, 0, overlapW, H);
+                        ctx.clip();
+                        ctx.globalAlpha = splitBlend * 0.6;
+                        ctx.drawImage(img1, leftX, imgY, faceW1, faceH);
+                        ctx.restore();
+                }
+        }
+
+        const lineAlpha = Math.max(0, 1.0 - splitBlend * 2.5);
+        if (lineAlpha > 0.02) {
+                const lineGrad = ctx.createLinearGradient(splitX - 2, 0, splitX + 2, 0);
+                lineGrad.addColorStop(0, `rgba(180,180,220,${lineAlpha * 0.0})`);
+                lineGrad.addColorStop(0.5, `rgba(220,220,255,${lineAlpha * 0.6})`);
+                lineGrad.addColorStop(1, `rgba(180,180,220,${lineAlpha * 0.0})`);
+                ctx.fillStyle = lineGrad;
+                ctx.fillRect(splitX - 2, 0, 4, H);
+        }
+
+        if (progress > 0.60) {
+                const heartAmt = (progress - 0.60) / 0.40;
+                const centerX = lerp(half, splitX + 10, heartAmt);
+                const numHearts = Math.floor(heartAmt * 6);
+                for (let i = 0; i < numHearts; i++) {
+                        const hx = centerX + (Math.sin(i * 2.1) * 80) + Math.sin(progress * 8 + i) * 15;
+                        const hy = H * 0.10 + (i * 28) + Math.sin(progress * 5 + i) * 12;
+                        const hSize = 10 + i * 3;
+                        ctx.save();
+                        ctx.globalAlpha = Math.min(1, heartAmt) * (0.5 + 0.5 * Math.sin(progress * 10 + i));
+                        ctx.fillStyle = "#ff4d94";
+                        ctx.font = `${hSize}px serif`;
+                        ctx.fillText("♥", hx, hy % (H * 0.85));
+                        ctx.restore();
+                }
+        }
+
+        if (progress > 0.55) {
+                const vigAmt = (progress - 0.55) / 0.45;
+                const vigGrad = ctx.createRadialGradient(W / 2, H / 2, H * 0.2, W / 2, H / 2, W * 0.75);
+                vigGrad.addColorStop(0, "rgba(0,0,0,0)");
+                vigGrad.addColorStop(1, `rgba(0,0,0,${vigAmt * 0.45})`);
+                ctx.fillStyle = vigGrad;
+                ctx.fillRect(0, 0, W, H);
+        }
 }
 
 module.exports = {
         config: {
                 name: "قبلة",
                 aliases: ["kiss"],
-                version: "3.0",
+                version: "4.0",
                 author: "BlackBot",
-                countDown: 12,
+                countDown: 15,
                 role: 0,
-                shortDescription: "فيديو قبلة متحرك بصور البروفايل",
-                longDescription: "ينشئ GIF متحرك يجمع صور بروفايل الطرفين في مشهد قبلة",
+                shortDescription: "فيديو قبلة بصور البروفايل",
+                longDescription: "ينشئ فيديو MP4 بأسلوب split-screen يجمع صور البروفايل في مشهد قبلة",
                 category: "fun",
                 guide: "{pn} @ذكر أو رد على رسالة"
         },
@@ -72,14 +156,14 @@ module.exports = {
                         }
 
                         const senderID = event.senderID;
-                        const loadMsg = await message.reply("⏳ | جاري تجهيز الفيديو...");
+                        await message.reply("⏳ | جاري إنشاء الفيديو...");
 
-                        const pic1Url = `https://graph.facebook.com/${senderID}/picture?width=512&height=512&type=large`;
-                        const pic2Url = `https://graph.facebook.com/${targetID}/picture?width=512&height=512&type=large`;
+                        const pic1Url = `https://graph.facebook.com/${senderID}/picture?width=720&height=720&type=large`;
+                        const pic2Url = `https://graph.facebook.com/${targetID}/picture?width=720&height=720&type=large`;
 
                         const [res1, res2] = await Promise.all([
-                                axios.get(pic1Url, { responseType: "arraybuffer", timeout: 10000 }),
-                                axios.get(pic2Url, { responseType: "arraybuffer", timeout: 10000 })
+                                axios.get(pic1Url, { responseType: "arraybuffer", timeout: 12000 }),
+                                axios.get(pic2Url, { responseType: "arraybuffer", timeout: 12000 })
                         ]);
 
                         const tmpDir = path.join(__dirname, `kiss_tmp_${Date.now()}`);
@@ -94,132 +178,30 @@ module.exports = {
                         const img2 = await loadImage(img2Path);
 
                         const W = 780, H = 440;
-                        const TOTAL_FRAMES = 36;
-                        const FPS = 12;
-                        const RADIUS = 115;
-
-                        const hearts = [];
-                        for (let i = 0; i < 8; i++) {
-                                hearts.push({
-                                        x: W / 2 + (Math.random() - 0.5) * 200,
-                                        y: H * 0.1 + Math.random() * H * 0.3,
-                                        size: 12 + Math.random() * 18,
-                                        speed: 0.5 + Math.random() * 1.5,
-                                        offset: Math.random() * Math.PI * 2
-                                });
-                        }
+                        const FPS = 24;
+                        const DURATION = 5.5;
+                        const TOTAL_FRAMES = Math.floor(FPS * DURATION);
 
                         for (let f = 0; f < TOTAL_FRAMES; f++) {
+                                const progress = f / (TOTAL_FRAMES - 1);
                                 const canvas = createCanvas(W, H);
                                 const ctx = canvas.getContext("2d");
-                                const progress = f / (TOTAL_FRAMES - 1);
-
-                                const bg = ctx.createRadialGradient(W / 2, H / 2, 0, W / 2, H / 2, W * 0.7);
-                                bg.addColorStop(0, "#2d1b3d");
-                                bg.addColorStop(0.5, "#1a0f2e");
-                                bg.addColorStop(1, "#0d0820");
-                                ctx.fillStyle = bg;
-                                ctx.fillRect(0, 0, W, H);
-
-                                for (let i = 0; i < 40; i++) {
-                                        const sx = (i * 137.5) % W;
-                                        const sy = (i * 89.3 + f * 0.5) % H;
-                                        ctx.globalAlpha = 0.15 + (i % 3) * 0.05;
-                                        ctx.fillStyle = "#ffffff";
-                                        ctx.beginPath();
-                                        ctx.arc(sx, sy, 1, 0, Math.PI * 2);
-                                        ctx.fill();
-                                }
-                                ctx.globalAlpha = 1;
-
-                                let x1, x2, tilt1, tilt2, scale;
-
-                                if (progress < 0.35) {
-                                        const p = progress / 0.35;
-                                        const ease = p * p;
-                                        x1 = W * 0.16 + ease * W * 0.04;
-                                        x2 = W * 0.84 - ease * W * 0.04;
-                                        tilt1 = ease * 0.04;
-                                        tilt2 = -ease * 0.04;
-                                        scale = 1.0;
-                                } else if (progress < 0.72) {
-                                        const p = (progress - 0.35) / 0.37;
-                                        const ease = p < 0.5 ? 2 * p * p : -1 + (4 - 2 * p) * p;
-                                        x1 = W * 0.20 + ease * W * 0.23;
-                                        x2 = W * 0.80 - ease * W * 0.23;
-                                        tilt1 = 0.04 + ease * 0.20;
-                                        tilt2 = -(0.04 + ease * 0.20);
-                                        scale = 1.0 + ease * 0.18;
-                                } else {
-                                        const p = (progress - 0.72) / 0.28;
-                                        const ease = Math.sin(p * Math.PI / 2);
-                                        x1 = W * 0.43 - ease * W * 0.01;
-                                        x2 = W * 0.57 + ease * W * 0.01;
-                                        tilt1 = 0.24 + ease * 0.06;
-                                        tilt2 = -(0.24 + ease * 0.06);
-                                        scale = 1.18 + ease * 0.04;
-                                }
-
-                                const r = RADIUS * scale;
-                                const y = H * 0.52;
-
-                                drawCircleImage(ctx, img1, x1, y, r, tilt1, "#ff69b4");
-                                drawCircleImage(ctx, img2, x2, y, r, tilt2, "#c084fc");
-
-                                if (progress > 0.5) {
-                                        const heartProgress = (progress - 0.5) / 0.5;
-                                        hearts.forEach((h, i) => {
-                                                const floatY = h.y - f * h.speed;
-                                                const floatX = h.x + Math.sin(f * 0.15 + h.offset) * 15;
-                                                const alpha = heartProgress * (0.6 + Math.sin(f * 0.3 + h.offset) * 0.3);
-                                                const clampedAlpha = Math.max(0, Math.min(1, alpha));
-                                                const color = i % 2 === 0 ? "#ff69b4" : "#e879f9";
-                                                drawHeart(ctx, floatX, ((floatY % H) + H) % H, h.size, color, clampedAlpha);
-                                        });
-                                }
-
-                                if (progress > 0.68) {
-                                        const kProgress = (progress - 0.68) / 0.32;
-                                        ctx.save();
-                                        ctx.globalAlpha = kProgress * 0.9;
-                                        ctx.font = `bold ${Math.floor(28 + kProgress * 10)}px serif`;
-                                        ctx.fillStyle = "#ff85c1";
-                                        ctx.textAlign = "center";
-                                        ctx.shadowColor = "#ff69b4";
-                                        ctx.shadowBlur = 10;
-                                        ctx.fillText("💋", W / 2, H * 0.16);
-                                        ctx.restore();
-                                }
-
-                                if (progress > 0.75) {
-                                        const lProgress = (progress - 0.75) / 0.25;
-                                        ctx.save();
-                                        ctx.globalAlpha = lProgress * 0.7;
-                                        ctx.fillStyle = "#ff69b4";
-                                        ctx.font = "bold 18px serif";
-                                        ctx.textAlign = "center";
-                                        ctx.fillText("❤️", W * 0.3, H * 0.82);
-                                        ctx.fillText("❤️", W * 0.7, H * 0.82);
-                                        ctx.restore();
-                                }
-
-                                const framePath = path.join(tmpDir, `frame_${String(f).padStart(3, "0")}.png`);
+                                drawSplitFrame(ctx, img1, img2, W, H, progress);
+                                const framePath = path.join(tmpDir, `frame_${String(f).padStart(4, "0")}.png`);
                                 fs.writeFileSync(framePath, canvas.toBuffer("image/png"));
                         }
 
-                        const outputPath = path.join(tmpDir, "kiss_output.gif");
-
+                        const outputPath = path.join(tmpDir, "kiss_output.mp4");
                         execSync(
-                                `ffmpeg -y -framerate ${FPS} -i "${path.join(tmpDir, "frame_%03d.png")}" ` +
-                                `-filter_complex "[0:v] fps=${FPS},scale=${W}:${H}:flags=lanczos,split [a][b];[a] palettegen=max_colors=128:stats_mode=full [p];[b][p] paletteuse=dither=sierra2_4a" ` +
+                                `ffmpeg -y -framerate ${FPS} -i "${path.join(tmpDir, "frame_%04d.png")}" ` +
+                                `-vf "scale=${W}:${H}" ` +
+                                `-c:v libx264 -preset fast -crf 20 -pix_fmt yuv420p ` +
                                 `"${outputPath}"`,
-                                { timeout: 60000 }
+                                { timeout: 90000 }
                         );
 
-                        const senderName = event.senderName || "أنت";
-                        const targetName = (event.mentions || {})[targetID] || "الهدف";
-
-                        try { api.unsendMessage(loadMsg.messageID); } catch (_) {}
+                        const senderName = event.senderName || senderID;
+                        const targetName = (event.mentions || {})[targetID] || targetID;
 
                         await message.reply({
                                 body: `💋 | ${senderName} قبّل ${targetName} 💕`,
@@ -228,11 +210,11 @@ module.exports = {
 
                         setTimeout(() => {
                                 try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch (_) {}
-                        }, 30000);
+                        }, 60000);
 
                 } catch (err) {
                         console.error("[قبلة]", err.message || err);
-                        message.reply("❌ | حدث خطأ أثناء إنشاء الفيديو، حاول مجدداً.");
+                        message.reply("❌ | حدث خطأ أثناء إنشاء الفيديو.");
                 }
         }
 };
